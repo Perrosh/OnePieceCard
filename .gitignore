@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+
+# Generated data
+out/*
+!out/.gitkeep
+json/*
+!json/.gitkeep
+stg/*
+!stg/.gitkeep
+logs/*
+!logs/.gitkeep
+bkp/*
+!bkp/.gitkeep
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

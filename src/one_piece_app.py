@@ -5,7 +5,6 @@ import sys
 import time
 from pathlib import Path
 from collections import deque
-from zipfile import BadZipFile
 
 import pandas as pd
 import plotly.express as px
@@ -19,11 +18,14 @@ from one_piece_common import (
     LOG_DIR,
     JSON_DIR,
     BKP_DIR,
+    PRICE_SOURCE_COLUMN,
+    backup_file,
+    create_collection_workbook_with_dashboard,
     PRICE_TREND_REPORT_CSV,
     TOP_5_AUMENTI_CSV,
     TOP_5_CALI_CSV,
-    FINAL_STG_CSV,
-    UPDATED_STG_CSV,
+    VALUE_HISTORY_CSV,
+    append_value_history,
 )
 
 
@@ -63,74 +65,34 @@ def euro(value):
         return "€ 0,00"
 
 
-def _read_json_collection(json_path: Path):
-    with json_path.open("r", encoding="utf-8") as f:
-        payload = json.load(f)
-    rows = payload.get("cards", payload if isinstance(payload, list) else [])
-    generated_at = payload.get("generatedAt", "") if isinstance(payload, dict) else ""
-    return pd.DataFrame(rows), str(json_path), generated_at
-
-
-def _read_excel_collection(xlsx_path: Path):
-    try:
-        df = pd.read_excel(xlsx_path, sheet_name="Carte")
-        return df, str(xlsx_path), ""
-    except (BadZipFile, ValueError, OSError) as exc:
-        st.warning(
-            "Ho trovato il file Excel finale, ma non sembra un .xlsx valido. "
-            "Probabilmente una build precedente si è interrotta mentre lo stava creando. "
-            f"File ignorato: {xlsx_path} | Errore: {exc}"
-        )
-        return None
-
-
-def _read_csv_collection(csv_path: Path):
-    try:
-        df = pd.read_csv(csv_path, encoding="utf-8-sig")
-        return df, str(csv_path), ""
-    except Exception as exc:
-        st.warning(f"Non riesco a leggere il CSV di fallback {csv_path}: {exc}")
-        return None
-
-
 def load_collection():
-    """Carica la collezione per la dashboard web.
-
-    Priorità:
-    1. out/one_piece_collection.json, il formato più robusto;
-    2. out/one_piece_collection.xlsx, solo se valido;
-    3. CSV intermedi in stg/, utili quando la build si è fermata prima di creare l'Excel.
-    """
     json_path = Path(OUTPUT_JSON)
     xlsx_path = Path(OUTPUT_XLSX)
 
-    if json_path.exists() and json_path.stat().st_size > 0:
+    if json_path.exists():
+        with json_path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        rows = payload.get("cards", payload if isinstance(payload, list) else [])
+        df = pd.DataFrame(rows)
+        source = str(json_path)
+        generated_at = payload.get("generatedAt", "") if isinstance(payload, dict) else ""
+        return df, source, generated_at
+
+    if xlsx_path.exists():
         try:
-            return _read_json_collection(json_path)
+            df = pd.read_excel(xlsx_path, sheet_name="Carte")
+            return df, str(xlsx_path), ""
         except Exception as exc:
-            st.warning(f"JSON finale presente ma non leggibile, provo altri file. Errore: {exc}")
+            st.warning(f"Excel finale presente ma non leggibile: {exc}")
 
-    if xlsx_path.exists() and xlsx_path.stat().st_size > 0:
-        loaded = _read_excel_collection(xlsx_path)
-        if loaded is not None:
-            return loaded
-
-    fallback_csvs = [
-        Path(FINAL_STG_CSV),
-        Path(UPDATED_STG_CSV),
-        Path(STG_DIR) / "one_piece_collection_sync_stg.csv",
-        Path(STG_DIR) / "one_piece_collection_stg.csv",
-    ]
-    existing = [p for p in fallback_csvs if p.exists() and p.stat().st_size > 0]
-    existing.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for csv_path in existing:
-        loaded = _read_csv_collection(csv_path)
-        if loaded is not None:
-            st.info(
-                "Sto usando un CSV intermedio perché non ho trovato un JSON/Excel finale valido. "
-                "Premi 'Crea tutto da zero' dopo aver installato l'ultima versione per rigenerare out/one_piece_collection.xlsx."
-            )
-            return loaded
+    # Fallback: se la build è caduta prima dell'Excel, prova il CSV intermedio.
+    stg_csv = Path(STG_DIR) / "one_piece_collection_stg.csv"
+    if stg_csv.exists():
+        try:
+            df = pd.read_csv(stg_csv)
+            return df, str(stg_csv), ""
+        except Exception as exc:
+            st.warning(f"CSV intermedio presente ma non leggibile: {exc}")
 
     return pd.DataFrame(), "", ""
 
@@ -142,6 +104,52 @@ def normalize_numeric(df, cols):
             out[c] = 0
         out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0)
     return out
+
+
+def save_collection_from_streamlit(df):
+    """Salva quantità modificate da Streamlit su JSON ed Excel finale.
+
+    La modifica manuale deve essere sicura: prima copio i finali esistenti in bkp/,
+    poi scrivo JSON ed Excel tramite file temporanei e sostituzione atomica.
+    """
+    data = df.copy()
+    for col in ["Quantità", "Valore"]:
+        if col not in data.columns:
+            data[col] = 0
+        data[col] = pd.to_numeric(data[col], errors="coerce").fillna(0)
+
+    data["Quantità"] = data["Quantità"].clip(lower=0).round(0).astype(int)
+    data["Valore"] = data["Valore"].astype(float)
+    data["Valore totale"] = data["Quantità"] * data["Valore"]
+
+    # Backup dei finali attuali prima della modifica manuale.
+    backup_file(OUTPUT_JSON, move=False)
+    backup_file(OUTPUT_XLSX, move=False)
+
+    json_path = Path(OUTPUT_JSON)
+    json_tmp = json_path.with_name(json_path.stem + ".tmp" + json_path.suffix)
+    append_value_history(data, "streamlit_quantity_edit")
+    payload = {
+        "generatedAt": pd.Timestamp.now().isoformat(timespec="seconds"),
+        "source": "streamlit_quantity_edit",
+        "priceSourceColumn": PRICE_SOURCE_COLUMN,
+        "cardsCount": len(data),
+        "cards": data.where(pd.notna(data), "").to_dict(orient="records"),
+    }
+    with json_tmp.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(json_tmp, json_path)
+
+    xlsx_path = Path(OUTPUT_XLSX)
+    xlsx_tmp = xlsx_path.with_name(xlsx_path.stem + ".tmp" + xlsx_path.suffix)
+    if xlsx_tmp.exists():
+        xlsx_tmp.unlink()
+    create_collection_workbook_with_dashboard(data, str(xlsx_tmp))
+    os.replace(xlsx_tmp, xlsx_path)
+
+
+def money_column(label):
+    return st.column_config.NumberColumn(label, format="€ %.2f")
 
 
 def run_script(script_name):
@@ -230,13 +238,13 @@ with st.sidebar:
     st.write("Lancia gli script senza aprire PyCharm.")
 
     if st.button("Crea tutto da zero", use_container_width=True):
-        st.session_state["pending_script"] = "one_piece_collection_build.py"
+        run_script("one_piece_collection_build.py")
 
     if st.button("Aggiorna solo valori", use_container_width=True):
-        st.session_state["pending_script"] = "one_piece_collection_update_values.py"
+        run_script("one_piece_collection_update_values.py")
 
     if st.button("Sync nuove espansioni", use_container_width=True):
-        st.session_state["pending_script"] = "one_piece_collection_sync.py"
+        run_script("one_piece_collection_sync.py")
 
     if st.button("Ricarica dati dashboard", use_container_width=True):
         st.rerun()
@@ -248,16 +256,6 @@ with st.sidebar:
         language="text",
     )
 
-
-pending_script = st.session_state.pop("pending_script", None)
-if pending_script:
-    st.subheader("Esecuzione in corso")
-    st.caption("Il log qui sotto viene aggiornato mentre lo script lavora. Se Cardmarket o Bandai sono lenti, almeno vedi il battito del motore.")
-    completed_ok = run_script(pending_script)
-    if completed_ok:
-        st.info("Run completata. La dashboard qui sotto viene ricaricata leggendo i file appena creati.")
-    else:
-        st.warning("Run terminata con errore. Leggi il log qui sopra: l'ultima traceback è la mappa del tesoro per sistemare il bug.")
 
 if st.session_state.get("last_run_output"):
     with st.expander("Ultimo log esecuzione da Streamlit", expanded=False):
@@ -290,11 +288,11 @@ total_value = float(collection.get("Valore totale", 0).sum())
 priced = int((collection.get("Valore", 0) > 0).sum())
 net_delta = float(collection.get("Variazione valore", 0).sum()) if "Variazione valore" in collection.columns else 0
 
-k1.metric("Righe", rows)
-k2.metric("Righe possedute", owned_rows)
+k1.metric("Carte", rows)
+k2.metric("Carte possedute", owned_rows)
 k3.metric("Quantità totale", total_qty)
-k4.metric("Valore totale", euro(total_value))
-k5.metric("Con prezzo", priced)
+k4.metric("Valore totale (€)", euro(total_value))
+k5.metric("Carte con prezzo", priced)
 k6.metric("Delta netto", euro(net_delta))
 
 if "Trend prezzo" in collection.columns:
@@ -305,6 +303,32 @@ if "Trend prezzo" in collection.columns:
     t4.metric("Non confrontate", int(collection["Trend prezzo"].isin(["Nuova / non confrontata", "Nessun confronto"]).sum()))
 
 st.divider()
+
+
+# Storico valore nel tempo
+history_path = Path(VALUE_HISTORY_CSV)
+if history_path.exists():
+    try:
+        history = pd.read_csv(history_path)
+    except Exception:
+        history = pd.DataFrame()
+    if not history.empty and "Data" in history.columns and "Valore collezione (€)" in history.columns:
+        st.subheader("Valore collezione nel tempo")
+        history["Data"] = pd.to_datetime(history["Data"], errors="coerce")
+        history["Valore collezione (€)"] = pd.to_numeric(history["Valore collezione (€)"], errors="coerce").fillna(0)
+        history = history.dropna(subset=["Data"]).sort_values("Data")
+        if not history.empty:
+            fig = px.line(
+                history,
+                x="Data",
+                y="Valore collezione (€)",
+                markers=True,
+                title="Andamento del valore aggiornato a ogni build/update/sync",
+            )
+            fig.update_yaxes(tickprefix="€ ")
+            st.plotly_chart(fig, use_container_width=True)
+else:
+    st.caption("Lo storico valore verrà creato al prossimo aggiornamento valori/build/sync.")
 
 chart_col1, chart_col2 = st.columns(2)
 
@@ -328,10 +352,10 @@ chart_col3, chart_col4 = st.columns(2)
 
 with chart_col3:
     if "Trend prezzo" in collection.columns:
-        trend = collection.groupby("Trend prezzo", dropna=False).size().reset_index(name="righe")
+        trend = collection.groupby("Trend prezzo", dropna=False).size().reset_index(name="carte")
         trend = trend[trend["Trend prezzo"].astype(str).str.strip() != ""]
         if not trend.empty:
-            fig = px.bar(trend, x="Trend prezzo", y="righe", title="Andamento prezzi per numero righe")
+            fig = px.bar(trend, x="Trend prezzo", y="carte", title="Andamento prezzi per numero carte")
             st.plotly_chart(fig, use_container_width=True)
 
 with chart_col4:
@@ -412,7 +436,57 @@ show_cols = [c for c in [
     "Valore precedente", "Variazione valore", "Variazione %", "Trend prezzo"
 ] if c in filtered.columns]
 
-st.dataframe(filtered[show_cols], use_container_width=True, hide_index=True)
+st.caption("Puoi modificare solo la colonna Quantità. I valori economici sono in euro (€). Dopo la modifica premi Salva quantità.")
+
+editor_df = filtered[show_cols].copy()
+editor_df.insert(0, "_row_id", filtered.index.astype(int))
+
+column_config = {
+    "_row_id": None,
+    "Quantità": st.column_config.NumberColumn("Quantità", min_value=0, step=1, format="%d", help="Modifica qui quante copie possiedi."),
+    "Valore": money_column("Valore (€)"),
+    "Valore totale": money_column("Valore totale (€)"),
+    "Valore precedente": money_column("Valore precedente (€)"),
+    "Variazione valore": money_column("Variazione valore (€)"),
+    "Variazione %": st.column_config.NumberColumn("Variazione %", format="%.2f%%"),
+}
+
+edited_df = st.data_editor(
+    editor_df,
+    use_container_width=True,
+    hide_index=True,
+    num_rows="fixed",
+    disabled=[c for c in editor_df.columns if c != "Quantità"],
+    column_config=column_config,
+    key="cards_quantity_editor",
+)
+
+save_col, hint_col = st.columns([1, 3])
+with save_col:
+    save_pressed = st.button("Salva quantità", type="primary", use_container_width=True)
+with hint_col:
+    st.caption("Il salvataggio aggiorna out/one_piece_collection.json e out/one_piece_collection.xlsx, con backup automatico prima della modifica.")
+
+if save_pressed:
+    try:
+        updated = collection.copy()
+        changes = 0
+        for _, row in edited_df.iterrows():
+            row_id = int(row["_row_id"])
+            new_qty = int(max(0, pd.to_numeric(row.get("Quantità", 0), errors="coerce") or 0))
+            old_qty = int(pd.to_numeric(updated.at[row_id, "Quantità"], errors="coerce") or 0)
+            if new_qty != old_qty:
+                updated.at[row_id, "Quantità"] = new_qty
+                changes += 1
+
+        updated["Valore totale"] = pd.to_numeric(updated["Quantità"], errors="coerce").fillna(0) * pd.to_numeric(updated["Valore"], errors="coerce").fillna(0)
+        save_collection_from_streamlit(updated)
+        st.success(f"Quantità salvate. Carte modificate: {changes}. Excel e JSON aggiornati.")
+        st.cache_data.clear()
+        time.sleep(0.5)
+        st.rerun()
+    except Exception as exc:
+        st.error(f"Errore durante il salvataggio quantità: {exc}")
 
 st.divider()
 

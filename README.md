@@ -240,44 +240,36 @@ ma mantiene le cartelle grazie ai `.gitkeep`.
 - Al primo run non esiste ancora un confronto prezzi precedente.
 - Dal secondo run in poi la dashboard mostra aumento/calo rispetto al JSON precedente.
 
+## Modifica quantità da Streamlit
 
-## Note su Streamlit e log live
+Nella dashboard web, la tabella carte è modificabile solo nella colonna `Quantità`.
 
-La dashboard grafica si avvia con:
+Procedura:
 
-```bash
-streamlit run src/one_piece_app.py
-```
+1. filtra o cerca la carta;
+2. modifica il valore nella colonna `Quantità`;
+3. premi `Salva quantità`;
+4. il programma aggiorna automaticamente:
+   - `out/one_piece_collection.json`
+   - `out/one_piece_collection.xlsx`
+5. prima del salvataggio viene creato un backup automatico dei file finali esistenti.
 
-Puoi anche avviarla da PyCharm con:
-
-```bash
-python src/one_piece_app.py
-```
-
-In questo caso lo script rilancia automaticamente Streamlit nel modo corretto.
-
-Quando premi **Crea tutto da zero**, **Aggiorna solo valori** o **Sync nuove espansioni**, il log viene mostrato nella pagina principale in tempo reale. Se una run fallisce, l’ultima traceback viene lasciata nel riquadro log e salvata anche in `logs/`.
-
-### Errore `clean_for_excel`
-
-Nelle versioni precedenti la build poteva arrivare alla generazione Excel e fallire con:
+I campi economici nella dashboard web sono indicati in euro:
 
 ```text
-NameError: name 'clean_for_excel' is not defined
+Valore (€)
+Valore totale (€)
+Valore precedente (€)
+Variazione valore (€)
 ```
 
-La funzione ora è centralizzata in `src/one_piece_common.py`, quindi è disponibile sia agli script CLI sia alla dashboard Excel.
+Nota: le quantità modificate da Streamlit vengono mantenute anche nei successivi `update_values` e `sync`.
 
 
-## Troubleshooting: Excel assente o corrotto
+## Ultime modifiche
 
-Se la Dashboard Streamlit dice `BadZipFile: File is not a zip file`, significa che una build precedente si è fermata mentre stava creando `out/one_piece_collection.xlsx`.
-
-Da questa versione lo script crea l'Excel in modo atomico: prima scrive un file temporaneo, poi sostituisce il finale solo quando il file è completo. Inoltre la app Streamlit prova a caricare, in ordine:
-
-1. `out/one_piece_collection.json`;
-2. `out/one_piece_collection.xlsx`, se valido;
-3. i CSV intermedi in `stg/`, se i finali non sono disponibili.
-
-Per sistemare una situazione sporca già esistente, puoi cancellare manualmente eventuali file corrotti in `out/` e premere **Crea tutto da zero** dalla app Streamlit.
+- I JSON Cardmarket non vengono più cercati leggendo le pagine HTML di Cardmarket: gli script usano direttamente gli URL S3 pubblici configurati in `one_piece_common.py`.
+- La dashboard usa il termine **Carte** invece di **righe**.
+- Ogni build, sync, update valori e salvataggio quantità aggiorna `stg/value_history.csv`.
+- Streamlit mostra un grafico **Valore collezione nel tempo** usando lo storico salvato.
+- I valori economici sono espressi in euro (€).

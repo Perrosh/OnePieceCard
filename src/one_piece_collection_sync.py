@@ -447,8 +447,8 @@ def main():
     output_df.to_csv(SYNC_FINAL_CSV, index=False, encoding="utf-8-sig")
     print(f"CSV sync intermedio: {SYNC_FINAL_CSV}")
 
-    save_final_json_from_df(output_df, "one_piece_collection_sync.py")
     build_excel(output_df)
+    save_final_json_from_df(output_df, "one_piece_collection_sync.py")
 
     print("")
     print("Sync completato.")

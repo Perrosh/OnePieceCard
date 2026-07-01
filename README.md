@@ -4,14 +4,15 @@ Gestore locale per collezione **One Piece Card Game**.
 
 Il progetto crea e aggiorna un file Excel con:
 
-- carte dal sito ufficiale Bandai;
+- carte dal sito ufficiale Bandai EN e dal catalogo ufficiale JP/Asia per le rarità JP;
 - prezzi Cardmarket scaricati automaticamente;
 - quantità possedute;
 - valore totale;
 - dashboard Excel con KPI e grafici;
 - confronto prezzo rispetto all'ultimo JSON finale salvato in backup;
 - report Top 5 carte in aumento e Top 5 carte in calo;
-- dashboard web locale opzionale con Streamlit.
+- dashboard web locale opzionale con Streamlit;
+- storico del valore collezione nel tempo in `stg/value_history.csv`.
 
 ## Struttura progetto
 
@@ -109,7 +110,7 @@ Apre una dashboard nel browser con:
 - grafici per rarità, lingua, trend prezzo ed espansione;
 - Top 5 in aumento;
 - Top 5 in calo;
-- tabella filtrabile;
+- tabella filtrabile e modificabile in tutti i campi visibili;
 - pulsanti per lanciare build/update/sync;
 - download di Excel e JSON;
 - visualizzazione degli ultimi log;
@@ -163,16 +164,12 @@ stg/top_5_cali.csv
 
 ## Download JSON Cardmarket
 
-Gli script provano a leggere le pagine ufficiali Cardmarket:
+Gli script non cercano più i link nelle pagine HTML di Cardmarket.
+Usano direttamente i JSON S3 pubblici One Piece:
 
-- `https://www.cardmarket.com/en/Magic/Data/Product-List`
-- `https://www.cardmarket.com/en/Magic/Data/Price-Guide`
-
-Se Cardmarket risponde con `403 Forbidden`, usano automaticamente i fallback S3 pubblici One Piece:
-
-- `products_singles_18.json`
-- `products_nonsingles_18.json`
-- `price_guide_18.json`
+- `https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_18.json`
+- `https://downloads.s3.cardmarket.com/productCatalog/productList/products_nonsingles_18.json`
+- `https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_18.json`
 
 I JSON attivi vengono salvati in:
 
@@ -185,6 +182,52 @@ Le fonti usate vengono registrate in:
 ```text
 stg/cardmarket_json_sources.json
 ```
+
+## Catalogo JP e rarità diverse da EN
+
+Il catalogo EN viene letto da:
+
+```text
+https://en.onepiece-cardgame.com/cardlist/
+```
+
+Il catalogo JP/Asia viene letto da:
+
+```text
+https://www.onepiece-cardgame.com/cardlist/
+```
+
+Le rarità JP vengono ricavate dal raw ufficiale JP, senza override hardcoded.
+Se lo stesso ID carta compare più volte nel catalogo JP, per esempio una stampa `R` e una stampa `TR`, lo script sceglie la rarità con priorità più alta trovata nel sito ufficiale e compila anche le colonne diagnostiche:
+
+```text
+Rarità JP ufficiale
+Rarità JP candidate
+Fonte rarità JP
+```
+
+## Modifica dati da Streamlit
+
+Nella tabella carte di Streamlit puoi modificare tutti i campi visibili.
+Dopo aver premuto `Salva modifiche`, il programma aggiorna:
+
+```text
+out/one_piece_collection.json
+out/one_piece_collection.xlsx
+```
+
+Prima del salvataggio viene creato un backup automatico.
+Il campo `Valore totale` viene ricalcolato da `Quantità × Valore`.
+
+## Storico valore
+
+Ogni build, update, sync o salvataggio da Streamlit aggiunge un punto a:
+
+```text
+stg/value_history.csv
+```
+
+La dashboard Streamlit mostra il grafico `Valore collezione nel tempo (€)`.
 
 ## Backup
 
@@ -266,10 +309,28 @@ Variazione valore (€)
 Nota: le quantità modificate da Streamlit vengono mantenute anche nei successivi `update_values` e `sync`.
 
 
-## Ultime modifiche
+## Note JP e storico valore
 
-- I JSON Cardmarket non vengono più cercati leggendo le pagine HTML di Cardmarket: gli script usano direttamente gli URL S3 pubblici configurati in `one_piece_common.py`.
-- La dashboard usa il termine **Carte** invece di **righe**.
-- Ogni build, sync, update valori e salvataggio quantità aggiorna `stg/value_history.csv`.
-- Streamlit mostra un grafico **Valore collezione nel tempo** usando lo storico salvato.
-- I valori economici sono espressi in euro (€).
+Il catalogo inglese e quello giapponese possono avere rarità diverse. Il progetto scarica/cachea il catalogo JP in `stg/bandai_cards_jp_raw.csv` e applica le correzioni solo alle righe `Lingua = JP`.
+
+È presente anche un file override modificabile:
+
+```text
+stg/jp_rarity_overrides.csv
+```
+
+Contiene almeno il caso noto:
+
+```text
+OP16-042 Prisoner of Impel Down JP = TR
+```
+
+Ogni build/update/sync e ogni salvataggio quantità da Streamlit aggiunge un punto in:
+
+```text
+stg/value_history.csv
+```
+
+Streamlit mostra il grafico `Valore collezione nel tempo (€)`.
+
+I JSON Cardmarket non vengono più cercati nelle pagine HTML: vengono scaricati direttamente dagli URL S3 configurati in `one_piece_common.py`.

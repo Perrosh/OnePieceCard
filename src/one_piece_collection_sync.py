@@ -18,6 +18,8 @@ from one_piece_collection_build import (
     enrich,
     build_excel,
     sanitize_dataframe_for_excel,
+    scrape_jp_official_raw,
+    ensure_default_jp_overrides_file,
 )
 
 
@@ -395,6 +397,9 @@ def main():
     quantity_maps = build_quantity_maps(existing_df)
 
     df_cm = load_cardmarket_prices(CARDMARKET_MERGED_CSV)
+    sets = discover_sets()
+    # Rileggo sempre il catalogo JP: serve per rarità diverse da EN, senza forzature manuali.
+    scrape_jp_official_raw(sets, use_cache=False)
     raw_df = scrape_bandai_fresh()
 
     fresh_df = enrich(raw_df, df_cm)
@@ -440,6 +445,7 @@ def main():
 
     internal_cols = ["_SyncStatus", "_OldExcelOrder"]
     output_df = synced_df.drop(columns=[c for c in internal_cols if c in synced_df.columns]).copy()
+    output_df = apply_jp_official_corrections(output_df)
     output_df = add_price_trends_from_latest_backup(output_df)
     save_price_trend_reports(output_df)
     output_df = sanitize_dataframe_for_excel(output_df)
@@ -449,6 +455,7 @@ def main():
 
     build_excel(output_df)
     save_final_json_from_df(output_df, "one_piece_collection_sync.py")
+    append_value_history(output_df, "sync")
 
     print("")
     print("Sync completato.")

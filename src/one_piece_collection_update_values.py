@@ -190,11 +190,13 @@ def update_excel_values():
     # Converto il foglio aggiornato in DataFrame, calcolo trend contro il JSON precedente
     # e ricreo l'Excel completo con Dashboard/KPI/grafici.
     final_df = workbook_to_dataframe(wb)
+    final_df = apply_jp_official_corrections(final_df)
     final_df = add_price_trends_from_latest_backup(final_df)
     save_price_trend_reports(final_df)
     final_df.to_csv(UPDATED_STG_CSV, index=False, encoding="utf-8-sig")
     create_collection_workbook_with_dashboard(final_df, OUTPUT_XLSX)
     save_final_json_from_df(final_df, "one_piece_collection_update_values.py")
+    append_value_history(final_df, "update_values")
     pd.DataFrame(report).to_csv(UPDATE_REPORT_CSV, index=False, encoding="utf-8-sig")
     print("\nAggiornamento completato.")
     print(f"Righe aggiornate: {updated}")

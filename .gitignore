@@ -1,10 +1,7 @@
 # Python
-__pycache__/
-*.py[cod]
-*.pyo
 .venv/
-venv/
-.env
+__pycache__/
+*.pyc
 
 # Generated data
 out/*
@@ -18,8 +15,6 @@ logs/*
 bkp/*
 !bkp/.gitkeep
 
-# OS / IDE
-.DS_Store
-Thumbs.db
+# IDE
 .idea/
 .vscode/

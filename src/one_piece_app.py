@@ -79,20 +79,8 @@ def load_collection():
         return df, source, generated_at
 
     if xlsx_path.exists():
-        try:
-            df = pd.read_excel(xlsx_path, sheet_name="Carte")
-            return df, str(xlsx_path), ""
-        except Exception as exc:
-            st.warning(f"Excel finale presente ma non leggibile: {exc}")
-
-    # Fallback: se la build è caduta prima dell'Excel, prova il CSV intermedio.
-    stg_csv = Path(STG_DIR) / "one_piece_collection_stg.csv"
-    if stg_csv.exists():
-        try:
-            df = pd.read_csv(stg_csv)
-            return df, str(stg_csv), ""
-        except Exception as exc:
-            st.warning(f"CSV intermedio presente ma non leggibile: {exc}")
+        df = pd.read_excel(xlsx_path, sheet_name="Carte")
+        return df, str(xlsx_path), ""
 
     return pd.DataFrame(), "", ""
 
@@ -128,12 +116,11 @@ def save_collection_from_streamlit(df):
 
     json_path = Path(OUTPUT_JSON)
     json_tmp = json_path.with_name(json_path.stem + ".tmp" + json_path.suffix)
-    append_value_history(data, "streamlit_quantity_edit")
     payload = {
         "generatedAt": pd.Timestamp.now().isoformat(timespec="seconds"),
         "source": "streamlit_quantity_edit",
         "priceSourceColumn": PRICE_SOURCE_COLUMN,
-        "cardsCount": len(data),
+        "rows": len(data),
         "cards": data.where(pd.notna(data), "").to_dict(orient="records"),
     }
     with json_tmp.open("w", encoding="utf-8") as f:
@@ -146,6 +133,7 @@ def save_collection_from_streamlit(df):
         xlsx_tmp.unlink()
     create_collection_workbook_with_dashboard(data, str(xlsx_tmp))
     os.replace(xlsx_tmp, xlsx_path)
+    append_value_history(data, "streamlit_quantity_edit")
 
 
 def money_column(label):
@@ -291,7 +279,7 @@ net_delta = float(collection.get("Variazione valore", 0).sum()) if "Variazione v
 k1.metric("Carte", rows)
 k2.metric("Carte possedute", owned_rows)
 k3.metric("Quantità totale", total_qty)
-k4.metric("Valore totale (€)", euro(total_value))
+k4.metric("Valore totale", euro(total_value))
 k5.metric("Carte con prezzo", priced)
 k6.metric("Delta netto", euro(net_delta))
 
@@ -303,32 +291,6 @@ if "Trend prezzo" in collection.columns:
     t4.metric("Non confrontate", int(collection["Trend prezzo"].isin(["Nuova / non confrontata", "Nessun confronto"]).sum()))
 
 st.divider()
-
-
-# Storico valore nel tempo
-history_path = Path(VALUE_HISTORY_CSV)
-if history_path.exists():
-    try:
-        history = pd.read_csv(history_path)
-    except Exception:
-        history = pd.DataFrame()
-    if not history.empty and "Data" in history.columns and "Valore collezione (€)" in history.columns:
-        st.subheader("Valore collezione nel tempo")
-        history["Data"] = pd.to_datetime(history["Data"], errors="coerce")
-        history["Valore collezione (€)"] = pd.to_numeric(history["Valore collezione (€)"], errors="coerce").fillna(0)
-        history = history.dropna(subset=["Data"]).sort_values("Data")
-        if not history.empty:
-            fig = px.line(
-                history,
-                x="Data",
-                y="Valore collezione (€)",
-                markers=True,
-                title="Andamento del valore aggiornato a ogni build/update/sync",
-            )
-            fig.update_yaxes(tickprefix="€ ")
-            st.plotly_chart(fig, use_container_width=True)
-else:
-    st.caption("Lo storico valore verrà creato al prossimo aggiornamento valori/build/sync.")
 
 chart_col1, chart_col2 = st.columns(2)
 
@@ -368,6 +330,25 @@ with chart_col4:
             st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
+
+st.subheader("Valore collezione nel tempo")
+history_path = Path(VALUE_HISTORY_CSV)
+if history_path.exists():
+    try:
+        history = pd.read_csv(history_path, encoding="utf-8-sig")
+        if not history.empty and "Data" in history.columns and "Valore collezione (€)" in history.columns:
+            history["Data"] = pd.to_datetime(history["Data"], errors="coerce")
+            history["Valore collezione (€)"] = pd.to_numeric(history["Valore collezione (€)"], errors="coerce").fillna(0)
+            history = history.dropna(subset=["Data"]).sort_values("Data")
+            fig = px.line(history, x="Data", y="Valore collezione (€)", markers=True, title="Valore collezione nel tempo (€)")
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(history.tail(10), use_container_width=True, hide_index=True)
+        else:
+            st.caption("Storico presente ma ancora senza dati utili.")
+    except Exception as exc:
+        st.warning(f"Non riesco a leggere lo storico valori: {exc}")
+else:
+    st.caption("Lo storico viene creato dal prossimo build/update/sync o salvataggio quantità.")
 
 up_col, down_col = st.columns(2)
 
@@ -431,19 +412,22 @@ if search:
             mask = mask | filtered[col].astype(str).str.lower().str.contains(s, na=False)
     filtered = filtered[mask]
 
-show_cols = [c for c in [
-    "ID Carta", "Espansione", "Numero", "Nome", "Lingua", "Variante", "Rarità", "Color", "Quantità", "Valore", "Valore totale",
-    "Valore precedente", "Variazione valore", "Variazione %", "Trend prezzo"
-] if c in filtered.columns]
+preferred_cols = [
+    "ID Carta", "Espansione", "Numero", "Nome", "Lingua", "Variante", "Rarità", "Tipo carta", "Color", "Quantità",
+    "Valore", "Valore totale", "Valore precedente", "Variazione valore", "Variazione %", "Trend prezzo",
+    "Rarità JP ufficiale", "Rarità JP candidate", "Fonte rarità JP",
+]
+show_cols = [c for c in preferred_cols if c in filtered.columns]
+show_cols += [c for c in filtered.columns if c not in show_cols]
 
-st.caption("Puoi modificare solo la colonna Quantità. I valori economici sono in euro (€). Dopo la modifica premi Salva quantità.")
+st.caption("Puoi modificare tutti i campi visibili. I valori economici sono in euro (€). Dopo la modifica premi Salva modifiche.")
 
 editor_df = filtered[show_cols].copy()
 editor_df.insert(0, "_row_id", filtered.index.astype(int))
 
 column_config = {
     "_row_id": None,
-    "Quantità": st.column_config.NumberColumn("Quantità", min_value=0, step=1, format="%d", help="Modifica qui quante copie possiedi."),
+    "Quantità": st.column_config.NumberColumn("Quantità", min_value=0, step=1, format="%d", help="Quante copie possiedi."),
     "Valore": money_column("Valore (€)"),
     "Valore totale": money_column("Valore totale (€)"),
     "Valore precedente": money_column("Valore precedente (€)"),
@@ -456,37 +440,57 @@ edited_df = st.data_editor(
     use_container_width=True,
     hide_index=True,
     num_rows="fixed",
-    disabled=[c for c in editor_df.columns if c != "Quantità"],
+    disabled=["_row_id"],
     column_config=column_config,
-    key="cards_quantity_editor",
+    key="cards_full_editor",
 )
 
 save_col, hint_col = st.columns([1, 3])
 with save_col:
-    save_pressed = st.button("Salva quantità", type="primary", use_container_width=True)
+    save_pressed = st.button("Salva modifiche", type="primary", use_container_width=True)
 with hint_col:
-    st.caption("Il salvataggio aggiorna out/one_piece_collection.json e out/one_piece_collection.xlsx, con backup automatico prima della modifica.")
+    st.caption("Il salvataggio aggiorna out/one_piece_collection.json e out/one_piece_collection.xlsx, con backup automatico prima della modifica. Valore totale viene ricalcolato da Quantità × Valore.")
 
 if save_pressed:
     try:
         updated = collection.copy()
         changes = 0
+        numeric_cols = {"Quantità", "Valore", "Valore totale", "Valore precedente", "Variazione valore", "Variazione %", "CM_Low", "CM_Trend", "CM_Avg", "CM_Avg1", "CM_Avg7", "CM_Avg30", "Power", "Counter", "Cost", "Life"}
         for _, row in edited_df.iterrows():
             row_id = int(row["_row_id"])
-            new_qty = int(max(0, pd.to_numeric(row.get("Quantità", 0), errors="coerce") or 0))
-            old_qty = int(pd.to_numeric(updated.at[row_id, "Quantità"], errors="coerce") or 0)
-            if new_qty != old_qty:
-                updated.at[row_id, "Quantità"] = new_qty
-                changes += 1
+            for col in show_cols:
+                if col not in updated.columns or col == "_row_id":
+                    continue
+                new_value = row.get(col, "")
+                old_value = updated.at[row_id, col]
+                if col in numeric_cols:
+                    new_num = pd.to_numeric(new_value, errors="coerce")
+                    old_num = pd.to_numeric(old_value, errors="coerce")
+                    if pd.isna(new_num):
+                        new_value = 0
+                    else:
+                        new_value = int(new_num) if col == "Quantità" else float(new_num)
+                    old_cmp = 0 if pd.isna(old_num) else (int(old_num) if col == "Quantità" else float(old_num))
+                    changed = new_value != old_cmp
+                else:
+                    new_value = "" if pd.isna(new_value) else str(new_value)
+                    old_cmp = "" if pd.isna(old_value) else str(old_value)
+                    changed = new_value != old_cmp
+                if changed:
+                    updated.at[row_id, col] = new_value
+                    changes += 1
 
-        updated["Valore totale"] = pd.to_numeric(updated["Quantità"], errors="coerce").fillna(0) * pd.to_numeric(updated["Valore"], errors="coerce").fillna(0)
+        if "Quantità" in updated.columns and "Valore" in updated.columns:
+            updated["Quantità"] = pd.to_numeric(updated["Quantità"], errors="coerce").fillna(0).clip(lower=0).round(0).astype(int)
+            updated["Valore"] = pd.to_numeric(updated["Valore"], errors="coerce").fillna(0)
+            updated["Valore totale"] = updated["Quantità"] * updated["Valore"]
         save_collection_from_streamlit(updated)
-        st.success(f"Quantità salvate. Carte modificate: {changes}. Excel e JSON aggiornati.")
+        st.success(f"Modifiche salvate. Campi modificati: {changes}. Excel e JSON aggiornati.")
         st.cache_data.clear()
         time.sleep(0.5)
         st.rerun()
     except Exception as exc:
-        st.error(f"Errore durante il salvataggio quantità: {exc}")
+        st.error(f"Errore durante il salvataggio modifiche: {exc}")
 
 st.divider()
 

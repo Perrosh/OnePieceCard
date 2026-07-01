@@ -14,9 +14,10 @@ from datetime import datetime
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.chart import BarChart, PieChart, LineChart, Reference
+from openpyxl.chart import BarChart, PieChart, Reference
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.utils import get_column_letter
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
 # ============================================================
 # PATH PROGETTO
@@ -55,6 +56,8 @@ CARDMARKET_UPDATED_CSV = os.path.join(STG_DIR, "cardmarket_prices_updated.csv")
 UPDATE_REPORT_CSV = os.path.join(STG_DIR, "price_update_report.csv")
 UPDATED_STG_CSV = os.path.join(STG_DIR, "one_piece_collection_updated_stg.csv")
 VALUE_HISTORY_CSV = os.path.join(STG_DIR, "value_history.csv")
+JP_OFFICIAL_RAW_CSV = os.path.join(STG_DIR, "bandai_cards_jp_raw.csv")
+JP_RARITY_OVERRIDES_CSV = os.path.join(STG_DIR, "jp_rarity_overrides.csv")
 
 PRICE_GUIDE_PATTERN = "price_guide*.json"
 PRODUCTS_SINGLES_PATTERN = "products_singles*.json"
@@ -79,23 +82,6 @@ PRICE_SOURCE_COLUMN = "trend"
 EXCLUDE_PROMOS = True
 
 IGNORED_REPO_FILES = {".gitkeep", ".gitignore", "README.md"}
-
-
-# Excel non accetta alcuni caratteri di controllo invisibili.
-# Senza questa pulizia openpyxl/pandas possono creare file corrotti o fallire in scrittura.
-def clean_for_excel(value):
-    if value is None:
-        return ""
-    try:
-        if pd.isna(value):
-            return ""
-    except Exception:
-        pass
-    if not isinstance(value, str):
-        return value
-    # Rimuove caratteri XML non validi per Excel: 0x00-0x08, 0x0B-0x0C, 0x0E-0x1F.
-    value = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", value)
-    return value.strip()
 
 PROMO_KEYWORDS = [
     "promo", "promotion", "tournament", "winner", "event pack", "judge pack",
@@ -130,6 +116,23 @@ KNOWN_EXPANSIONS = [
     ("ex gear 5", "ST21")
 ]
 
+
+
+
+def clean_for_excel(value):
+    """Rende sicuri i testi prima di scriverli in Excel.
+
+    openpyxl non accetta alcuni caratteri di controllo e le celle hanno un limite
+    pratico di circa 32k caratteri. Tenerla in common evita crash nelle funzioni
+    centralizzate di Dashboard/Excel.
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        return value
+    value = ILLEGAL_CHARACTERS_RE.sub("", value)
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    return value[:32000] if len(value) > 32000 else value
 
 def ensure_dirs():
     for d in [JSON_DIR, STG_DIR, OUT_DIR, BKP_DIR, LOG_DIR]:
@@ -562,84 +565,29 @@ def fallback_cardmarket_one_piece_json_urls(reason):
     return discovered
 
 
-def discover_cardmarket_one_piece_json_urls():
+def get_cardmarket_one_piece_json_urls():
+    """Usa direttamente gli URL S3 pubblici dei JSON Cardmarket One Piece.
+
+    Non legge più le pagine HTML Cardmarket, quindi evita i 403 e rende il run
+    più semplice e prevedibile. I file vengono comunque validati dopo il download.
     """
-    Legge le pagine ufficiali Cardmarket Data Tables e ricava i link One Piece.
-    Se Cardmarket blocca le pagine HTML, usa fallback S3 pubblico e valida i JSON.
-    """
-    print("Cerco i link JSON One Piece dalle pagine Cardmarket...")
-    print(f"  Product List: {CARDMARKET_DATA_PAGES['product_list']}")
-    print(f"  Price Guide:  {CARDMARKET_DATA_PAGES['price_guide']}")
-
-    try:
-        product_html = fetch_text(CARDMARKET_DATA_PAGES["product_list"])
-        price_html = fetch_text(CARDMARKET_DATA_PAGES["price_guide"])
-    except Exception as e:
-        return fallback_cardmarket_one_piece_json_urls(e)
-
-    product_links = extract_links_from_html(product_html, CARDMARKET_DATA_PAGES["product_list"])
-    price_links = extract_links_from_html(price_html, CARDMARKET_DATA_PAGES["price_guide"])
-
-    def pick_link(links, must_contain_words, expected_url_piece):
-        candidates = []
-
-        for link in links:
-            text_lower = link["text"].lower()
-            href_lower = link["href"].lower()
-
-            if all(word in text_lower for word in must_contain_words):
-                candidates.append(link)
-            elif "one" in text_lower and "piece" in text_lower and expected_url_piece in href_lower:
-                candidates.append(link)
-
-        for link in candidates:
-            if "downloads.s3.cardmarket.com" in link["href"].lower() and expected_url_piece in link["href"].lower():
-                link["source"] = "cardmarket_page"
-                return link
-
-        if candidates:
-            candidates[0]["source"] = "cardmarket_page"
-            return candidates[0]
-
-        return None
-
-    singles = pick_link(product_links, ["one piece", "singles"], "products_singles")
-    nonsingles = pick_link(product_links, ["one piece", "non-singles"], "products_nonsingles")
-    priceguide = pick_link(price_links, ["one piece", "price guide"], "price_guide")
-
-    missing = []
-    if singles is None:
-        missing.append("One Piece Singles nella pagina Product List")
-    if nonsingles is None:
-        missing.append("One Piece Non-Singles nella pagina Product List")
-    if priceguide is None:
-        missing.append("One Piece price guide nella pagina Price Guide")
-
-    if missing:
-        return fallback_cardmarket_one_piece_json_urls(
-            "Link non trovati nelle pagine HTML: " + ", ".join(missing)
-        )
-
-    discovered = {
-        "singles": singles,
-        "nonsingles": nonsingles,
-        "priceguide": priceguide,
+    print("Uso direttamente gli URL JSON Cardmarket One Piece configurati:")
+    labels = {
+        "singles": "One Piece Singles",
+        "nonsingles": "One Piece Non-Singles",
+        "priceguide": "One Piece Price Guide",
     }
-
-    print("Link JSON One Piece trovati su Cardmarket:")
-    for key, item in discovered.items():
-        print(f"  {key}: {item['text']} -> {item['href']}")
-
-    for key, fallback_url in CARDMARKET_FALLBACK_JSON_URLS.items():
-        current_url = discovered[key]["href"]
-        if os.path.basename(current_url.split("?")[0]) != os.path.basename(fallback_url):
-            print(
-                "ATTENZIONE: Cardmarket sembra usare un filename diverso dal vecchio riferimento: "
-                f"{os.path.basename(fallback_url)} -> {os.path.basename(current_url.split('?')[0])}. "
-                "Uso automaticamente quello trovato nella pagina ufficiale."
-            )
-
+    discovered = {}
+    for key, url in CARDMARKET_FALLBACK_JSON_URLS.items():
+        discovered[key] = {
+            "text": labels[key],
+            "href": url,
+            "source": "direct_s3",
+            "reason": "configured_direct_url",
+        }
+        print(f"  {key}: {url}")
     return discovered
+
 
 def validate_cardmarket_json_files():
     singles_path = find_json(PRODUCTS_SINGLES_PATTERN)
@@ -695,36 +643,14 @@ def validate_cardmarket_json_files():
     )
 
 
-def direct_cardmarket_one_piece_json_urls():
-    """Restituisce direttamente gli URL JSON pubblici One Piece di Cardmarket.
-
-    Non legge più le pagine HTML Cardmarket Product List / Price Guide, perché
-    spesso rispondono 403. Gli URL S3 vengono comunque validati dopo il download.
-    """
-    labels = {
-        "singles": "One Piece Singles",
-        "nonsingles": "One Piece Non-Singles",
-        "priceguide": "One Piece Price Guide",
-    }
-    direct = {}
-    print("Uso direttamente gli URL JSON pubblici One Piece di Cardmarket:")
-    for key, url in CARDMARKET_FALLBACK_JSON_URLS.items():
-        direct[key] = {
-            "text": labels[key],
-            "href": url,
-            "source": "direct_s3",
-            "reason": "direct_configured_url",
-        }
-        print(f"  {key}: {labels[key]} -> {url}")
-    return direct
-
-
 def download_cardmarket_jsons(force=True):
     ensure_dirs()
 
-    discovered = direct_cardmarket_one_piece_json_urls()
+    discovered = get_cardmarket_one_piece_json_urls()
 
     if force:
+        # Prima di scaricare i nuovi JSON, sposto quelli correnti in bkp/json/.
+        # Il nome resta originale + timestamp, senza versioni tipo v001.
         existing_jsons = [
             f for f in os.listdir(JSON_DIR)
             if os.path.isfile(os.path.join(JSON_DIR, f)) and f.lower().endswith(".json")
@@ -734,9 +660,8 @@ def download_cardmarket_jsons(force=True):
             backup_json_files(move=True)
 
     manifest = {
-        "downloadedAt": datetime.now().isoformat(timespec="seconds"),
-        "mode": "direct_s3_urls",
-        "note": "Le pagine HTML Cardmarket non vengono lette. Si usano direttamente gli URL S3 pubblici One Piece configurati nello script.",
+        "discoveredAt": datetime.now().isoformat(timespec="seconds"),
+        "dataPages": CARDMARKET_DATA_PAGES,
         "files": {},
     }
 
@@ -754,14 +679,13 @@ def download_cardmarket_jsons(force=True):
             print(f"    URL:  {url}")
             print(f"    File: {destination}")
             download_file(url, destination)
-            print("    Salvato.")
+            print(f"    Salvato.")
 
         manifest["files"][key] = {
             "label": item["text"],
             "url": url,
             "filename": filename,
             "localPath": destination,
-            "source": item.get("source", "direct_s3"),
         }
 
     with open(CARDMARKET_JSON_SOURCES_JSON, "w", encoding="utf-8") as f:
@@ -1055,67 +979,13 @@ def load_cardmarket_prices(output_csv=CARDMARKET_MERGED_CSV):
     return df
 
 
-def append_value_history(df, source):
-    """Aggiunge uno snapshot storico del valore della collezione.
-
-    La serie serve alla dashboard Streamlit e al foglio Dashboard Excel per mostrare
-    l'andamento del valore nel tempo. Viene aggiornata a ogni build/update/sync e
-    anche quando si salvano quantità da Streamlit.
-    """
-    ensure_dirs()
-    data = df.copy()
-    for col in ["Quantità", "Valore"]:
-        if col not in data.columns:
-            data[col] = 0
-        data[col] = pd.to_numeric(data[col], errors="coerce").fillna(0)
-
-    total_cards = int(len(data))
-    owned_cards = int((data["Quantità"] > 0).sum())
-    total_quantity = int(data["Quantità"].sum())
-    collection_value = float((data["Quantità"] * data["Valore"]).sum())
-    database_market_value = float(data["Valore"].sum())
-    priced_cards = int((data["Valore"] > 0).sum())
-
-    now = datetime.now().isoformat(timespec="seconds")
-    row = {
-        "Data": now,
-        "Fonte": source,
-        "Carte": total_cards,
-        "Carte possedute": owned_cards,
-        "Quantità totale": total_quantity,
-        "Valore collezione (€)": round(collection_value, 2),
-        "Valore database (€)": round(database_market_value, 2),
-        "Carte con prezzo": priced_cards,
-    }
-
-    if os.path.exists(VALUE_HISTORY_CSV):
-        hist = pd.read_csv(VALUE_HISTORY_CSV)
-        hist = pd.concat([hist, pd.DataFrame([row])], ignore_index=True)
-    else:
-        hist = pd.DataFrame([row])
-
-    hist.to_csv(VALUE_HISTORY_CSV, index=False, encoding="utf-8-sig")
-    print(f"Storico valore aggiornato: {VALUE_HISTORY_CSV}")
-
-
-def load_value_history():
-    if not os.path.exists(VALUE_HISTORY_CSV):
-        return pd.DataFrame()
-    try:
-        hist = pd.read_csv(VALUE_HISTORY_CSV)
-        return hist
-    except Exception:
-        return pd.DataFrame()
-
-
 def save_final_json_from_df(df, source):
-    append_value_history(df, source)
     data = df.copy().where(pd.notna(df), "")
     payload = {
         "generatedAt": datetime.now().isoformat(timespec="seconds"),
         "source": source,
         "priceSourceColumn": PRICE_SOURCE_COLUMN,
-        "cardsCount": len(data),
+        "rows": len(data),
         "cards": data.to_dict(orient="records"),
     }
     with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
@@ -1132,6 +1002,135 @@ def apply_qty_conditional_format(ws, qty_col, first_row=2):
     ws.conditional_formatting.add(qty_range, FormulaRule(formula=[f'OR(${qty_letter}{first_row}=0,${qty_letter}{first_row}="")'], fill=qty_missing_fill))
     ws.conditional_formatting.add(qty_range, FormulaRule(formula=[f'${qty_letter}{first_row}>0'], fill=qty_owned_fill))
 
+
+
+# ============================================================
+# DATI UFFICIALI JP
+# ============================================================
+# Il sito JP/Asia può avere rarità diverse dal catalogo EN.
+# Non usiamo override hardcoded: leggiamo il raw JP salvato da scrape_jp_official_raw().
+# Se per lo stesso ID il sito JP contiene più stampe, scegliamo la rarità con priorità più alta
+# fra quelle trovate ufficialmente. Esempio: OP16-042 può comparire come R e TR,
+# quindi per le righe JP viene scelta TR perché presente nel catalogo JP.
+
+JP_RARITY_PRIORITY = {
+    "TR": 100,
+    "SP": 95,
+    "SEC": 90,
+    "L": 80,
+    "SR": 70,
+    "R": 60,
+    "UC": 50,
+    "C": 40,
+    "DON!!": 10,
+}
+
+
+def _rarity_priority(value):
+    return JP_RARITY_PRIORITY.get(str(value).strip().upper(), 0)
+
+
+def _load_jp_official_map():
+    official_rows = {}
+
+    if os.path.exists(JP_OFFICIAL_RAW_CSV):
+        try:
+            jp = pd.read_csv(JP_OFFICIAL_RAW_CSV, encoding="utf-8-sig", dtype={"ID Carta": str, "Numero": str}).fillna("")
+            for _, row in jp.iterrows():
+                card_id = normalize_code(str(row.get("ID Carta", "")).strip())
+                rarity = str(row.get("Rarità", "")).strip()
+                if not card_id or not rarity:
+                    continue
+                official_rows.setdefault(card_id, []).append({
+                    "Rarità JP ufficiale": rarity,
+                    "Nome JP ufficiale": str(row.get("Nome", "")).strip(),
+                    "Tipo carta JP ufficiale": str(row.get("Tipo carta", "")).strip(),
+                    "Color JP ufficiale": str(row.get("Color", "")).strip(),
+                    "Fonte rarità JP": "Sito ufficiale JP",
+                })
+        except Exception as exc:
+            print(f"ATTENZIONE: non riesco a leggere {JP_OFFICIAL_RAW_CSV}: {exc}")
+
+    official = {}
+    for card_id, rows in official_rows.items():
+        rows = [r for r in rows if str(r.get("Rarità JP ufficiale", "")).strip()]
+        if not rows:
+            continue
+        best = sorted(rows, key=lambda r: _rarity_priority(r.get("Rarità JP ufficiale", "")), reverse=True)[0].copy()
+        candidates = sorted({str(r.get("Rarità JP ufficiale", "")).strip() for r in rows if str(r.get("Rarità JP ufficiale", "")).strip()}, key=_rarity_priority, reverse=True)
+        best["Rarità JP candidate"] = ", ".join(candidates)
+        if len(candidates) > 1:
+            best["Fonte rarità JP"] = "Sito ufficiale JP, scelta priorità fra ristampe"
+        official[card_id] = best
+
+    return official
+
+
+def apply_jp_official_corrections(df):
+    data = df.copy()
+    for col in ["Rarità JP ufficiale", "Rarità JP candidate", "Nome JP ufficiale", "Tipo carta JP ufficiale", "Color JP ufficiale", "Fonte rarità JP"]:
+        if col not in data.columns:
+            data[col] = ""
+
+    official = _load_jp_official_map()
+    if not official or "Lingua" not in data.columns or "ID Carta" not in data.columns:
+        return data
+
+    changed = 0
+    for idx, row in data.iterrows():
+        lang = normalize_language(str(row.get("Lingua", "EN")))
+        if lang != "JP":
+            continue
+        card_id = normalize_code(str(row.get("ID Carta", "")).strip())
+        info = official.get(card_id)
+        if not info:
+            continue
+        rarity = str(info.get("Rarità JP ufficiale", "")).strip()
+        if rarity:
+            old = str(row.get("Rarità", "")).strip()
+            data.at[idx, "Rarità"] = rarity
+            data.at[idx, "Rarità JP ufficiale"] = rarity
+            if old != rarity:
+                changed += 1
+        for src, dst in [
+            ("Rarità JP candidate", "Rarità JP candidate"),
+            ("Nome JP ufficiale", "Nome JP ufficiale"),
+            ("Tipo carta JP ufficiale", "Tipo carta JP ufficiale"),
+            ("Color JP ufficiale", "Color JP ufficiale"),
+            ("Fonte rarità JP", "Fonte rarità JP"),
+        ]:
+            data.at[idx, dst] = info.get(src, "")
+    if changed:
+        print(f"Rarità JP corrette con dati ufficiali dal sito: {changed}")
+    return data
+
+
+def append_value_history(df, source):
+    """Aggiunge un punto storico del valore collezione in stg/value_history.csv."""
+    data = df.copy()
+    for c in ["Quantità", "Valore", "Valore totale"]:
+        if c not in data.columns:
+            data[c] = 0
+        data[c] = pd.to_numeric(data[c], errors="coerce").fillna(0)
+    data["Valore totale"] = data["Quantità"] * data["Valore"]
+    row = {
+        "Data": datetime.now().isoformat(timespec="seconds"),
+        "Fonte": source,
+        "Carte": int(len(data)),
+        "Carte possedute": int((data["Quantità"] > 0).sum()),
+        "Quantità totale": int(data["Quantità"].sum()),
+        "Valore collezione (€)": float(data["Valore totale"].sum()),
+        "Valore database (€)": float(data["Valore"].sum()),
+        "Carte con prezzo": int((data["Valore"] > 0).sum()),
+    }
+    ensure_dirs()
+    if os.path.exists(VALUE_HISTORY_CSV):
+        history = pd.read_csv(VALUE_HISTORY_CSV, encoding="utf-8-sig")
+        history = pd.concat([history, pd.DataFrame([row])], ignore_index=True)
+    else:
+        history = pd.DataFrame([row])
+    history.to_csv(VALUE_HISTORY_CSV, index=False, encoding="utf-8-sig")
+    print(f"Storico valore aggiornato: {VALUE_HISTORY_CSV}")
 
 # ============================================================
 # DASHBOARD + CONFRONTO PREZZI
@@ -1329,7 +1328,7 @@ def add_price_trends_from_latest_backup(df, previous_json_path=None):
 
     compared = sum(1 for x in trends if x in ["In aumento", "In calo", "Stabile"])
     print(f"Confronto prezzi: usato JSON precedente {previous_json_path}")
-    print(f"Carte confrontate: {compared} / {len(out)}")
+    print(f"Righe confrontate: {compared} / {len(out)}")
     return out
 
 
@@ -1376,7 +1375,7 @@ def _percent_format(ws, col, start_row=2):
 def _write_summary_table(dash, col_map, start_row, start_col, title, items, field_name, max_row):
     dash.cell(row=start_row, column=start_col).value = title
     dash.cell(row=start_row, column=start_col).font = Font(size=13, bold=True, color="1F4E78")
-    headers = [field_name, "Carte", "Possedute", "Quantità", "Valore (€)"]
+    headers = [field_name, "Carte", "Possedute", "Quantità", "Valore"]
     for i, h in enumerate(headers):
         cell = dash.cell(row=start_row + 1, column=start_col + i)
         cell.value = h
@@ -1405,7 +1404,7 @@ def create_collection_workbook_with_dashboard(df, output_xlsx=OUTPUT_XLSX):
     data = df.copy()
     preferred = [
         "ID Carta", "Espansione", "Numero", "Nome", "Lingua", "Variante", "CM Product Type",
-        "Rarità", "Tipo carta", "Color", "Quantità", "Valore", "Valore totale",
+        "Rarità", "Rarità JP ufficiale", "Fonte rarità JP", "Tipo carta", "Nome JP ufficiale", "Tipo carta JP ufficiale", "Color", "Color JP ufficiale", "Quantità", "Valore", "Valore totale",
         "Valore precedente", "Variazione valore", "Variazione %", "Trend prezzo", "Data confronto", "Fonte confronto",
         "Fonte prezzo", "CM_Data_Prezzo", "Cardmarket idProduct", "Cardmarket Nome", "Cardmarket Prodotti per carta",
         "CM_Low", "CM_Trend", "CM_Avg", "CM_Avg1", "CM_Avg7", "CM_Avg30",
@@ -1545,7 +1544,7 @@ def create_collection_workbook_with_dashboard(df, output_xlsx=OUTPUT_XLSX):
     trend_start = max(lang_last, exp_last) + 4
     dash.cell(row=trend_start, column=1).value = "Riepilogo andamento prezzi"
     dash.cell(row=trend_start, column=1).font = Font(size=13, bold=True, color="1F4E78")
-    trend_headers = ["Trend prezzo", "Carte", "Delta totale (€)"]
+    trend_headers = ["Trend prezzo", "Carte", "Delta totale"]
     for i, h in enumerate(trend_headers):
         cell = dash.cell(row=trend_start + 1, column=1 + i)
         cell.value = h
@@ -1592,7 +1591,7 @@ def create_collection_workbook_with_dashboard(df, output_xlsx=OUTPUT_XLSX):
     valuable_start = top_start + 10
     dash.cell(row=valuable_start, column=1).value = "Top 20 carte più care nel database"
     dash.cell(row=valuable_start, column=1).font = Font(size=13, bold=True, color="1F4E78")
-    val_headers = ["ID Carta", "Lingua", "Nome", "Variante", "Valore (€)"]
+    val_headers = ["ID Carta", "Lingua", "Nome", "Variante", "Valore"]
     for i, h in enumerate(val_headers, start=1):
         cell = dash.cell(valuable_start + 1, i)
         cell.value = h
@@ -1641,40 +1640,7 @@ def create_collection_workbook_with_dashboard(df, output_xlsx=OUTPUT_XLSX):
         chart3.set_categories(Reference(dash, min_col=1, min_row=lang_header + 1, max_row=lang_last))
         dash.add_chart(chart3, f"H{chart_anchor_row + 32}")
 
-    # Storico valore nel tempo
-    hist = load_value_history()
-    history_start = valuable_start + 25
-    dash.cell(row=history_start, column=1).value = "Storico valore collezione"
-    dash.cell(row=history_start, column=1).font = Font(size=13, bold=True, color="1F4E78")
-    hist_headers = ["Data", "Valore collezione (€)", "Quantità totale", "Carte possedute"]
-    for i, h in enumerate(hist_headers, start=1):
-        cell = dash.cell(row=history_start + 1, column=i)
-        cell.value = h
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="5B9BD5")
-    hist_last = history_start + 1
-    if not hist.empty:
-        hist_tail = hist.tail(30).copy()
-        for r, (_, hrow) in enumerate(hist_tail.iterrows(), start=history_start + 2):
-            dash.cell(r, 1).value = str(hrow.get("Data", ""))
-            dash.cell(r, 2).value = float(pd.to_numeric(hrow.get("Valore collezione (€)", 0), errors="coerce") or 0)
-            dash.cell(r, 3).value = int(pd.to_numeric(hrow.get("Quantità totale", 0), errors="coerce") or 0)
-            dash.cell(r, 4).value = int(pd.to_numeric(hrow.get("Carte possedute", 0), errors="coerce") or 0)
-            dash.cell(r, 2).number_format = '€ #,##0.00'
-            hist_last = r
-
-        if hist_last > history_start + 2:
-            chart4 = LineChart()
-            chart4.title = "Valore collezione nel tempo"
-            chart4.y_axis.title = "Valore (€)"
-            chart4.x_axis.title = "Data"
-            chart4.height = 8
-            chart4.width = 18
-            chart4.add_data(Reference(dash, min_col=2, min_row=history_start + 1, max_row=hist_last), titles_from_data=True)
-            chart4.set_categories(Reference(dash, min_col=1, min_row=history_start + 2, max_row=hist_last))
-            dash.add_chart(chart4, f"H{chart_anchor_row + 48}")
-
-    note_row = max(history_start + 10, hist_last + 4)
+    note_row = valuable_start + 25
     dash[f"A{note_row}"] = "Come usarlo"
     dash[f"A{note_row}"].font = Font(size=13, bold=True, color="1F4E78")
     notes = [
@@ -1692,17 +1658,6 @@ def create_collection_workbook_with_dashboard(df, output_xlsx=OUTPUT_XLSX):
         for cell in row:
             cell.alignment = Alignment(vertical="center", wrap_text=True)
     dash.freeze_panes = "A11"
-    output_path = os.path.abspath(output_xlsx)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    tmp_path = output_path + ".tmp.xlsx"
-
-    # Scrittura atomica: se Excel fallisce, non lascia un .xlsx finale corrotto.
-    if os.path.exists(tmp_path):
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-    wb.save(tmp_path)
-    os.replace(tmp_path, output_path)
-    print(f"Excel finale con Dashboard creato: {output_path}")
+    wb.save(output_xlsx)
+    print(f"Excel finale con Dashboard creato: {output_xlsx}")
 

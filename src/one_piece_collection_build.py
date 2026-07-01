@@ -15,6 +15,7 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from one_piece_common import *
 
 BASE_URL = "https://en.onepiece-cardgame.com/cardlist/"
+JP_BASE_URL = "https://www.onepiece-cardgame.com/cardlist/"
 CREATE_JP_ROWS = True
 BACKUP_OLD_OUTPUTS = True
 USE_EXISTING_RAW = True
@@ -224,6 +225,66 @@ def save_raw(rows, errors):
         pd.DataFrame(errors).to_csv(ERRORS_CSV, index=False, encoding="utf-8-sig")
 
 
+
+def scrape_jp_official_raw(sets, use_cache=True):
+    """Scarica il catalogo ufficiale JP per ricavare rarità JP corrette.
+
+    Il catalogo EN e quello JP possono differire nella rarità. Le carte JP della
+    collezione usano questa tabella, più eventuali override locali.
+    """
+    if use_cache and os.path.exists(JP_OFFICIAL_RAW_CSV):
+        print(f"Trovato raw JP esistente: {JP_OFFICIAL_RAW_CSV}")
+        try:
+            return pd.read_csv(JP_OFFICIAL_RAW_CSV, encoding="utf-8-sig", dtype={"Numero": str, "ID Carta": str})
+        except Exception as exc:
+            print(f"ATTENZIONE: cache JP non leggibile, la riscarico: {exc}")
+
+    print("Scarico rarità ufficiali dal sito JP...")
+    rows, errors = [], []
+    for i, s in enumerate(sets, start=1):
+        series_id = str(s["series_id"])
+        set_code = s.get("set_code", "")
+        set_label = s.get("set_label", "")
+        print(f"Scarico JP set {i}/{len(sets)}: {series_id} {set_code} {set_label}")
+        try:
+            r = safe_get(JP_BASE_URL, params={"series": series_id})
+            lines = get_lines_from_html(r.text)
+            cards = parse_cards_from_lines(lines, series_id)
+            for c in cards:
+                c["Set Code Ricerca"] = set_code
+                c["Set Label Ricerca"] = set_label
+                c["Fonte catalogo"] = "JP ufficiale"
+                if c.get("Espansione") == "DON" and set_code:
+                    c["Espansione"] = set_code
+                    c["Numero"] = ""
+            print(f"  Carte JP lette: {len(cards)}")
+            rows.extend(cards)
+        except Exception as exc:
+            print(f"Errore JP sul set {series_id}: {exc}")
+            errors.append({"Series ID": series_id, "Set Code": set_code, "Set Label": set_label, "Errore": str(exc)})
+        time.sleep(random.uniform(1.0, 3.0))
+
+    jp_df = pd.DataFrame(rows)
+    if not jp_df.empty:
+        jp_df["ID Carta"] = jp_df["ID Carta"].apply(normalize_code)
+        jp_df["Numero"] = jp_df["Numero"].apply(format_number_text)
+        dedupe = [c for c in ["ID Carta", "Rarità", "Tipo carta", "Nome", "Color", "Card Set(s)"] if c in jp_df.columns]
+        if dedupe:
+            jp_df = jp_df.drop_duplicates(subset=dedupe)
+        jp_df.to_csv(JP_OFFICIAL_RAW_CSV, index=False, encoding="utf-8-sig")
+        print(f"Raw JP salvato in: {JP_OFFICIAL_RAW_CSV}")
+    if errors:
+        pd.DataFrame(errors).to_csv(os.path.join(STG_DIR, "one_piece_jp_errors.csv"), index=False, encoding="utf-8-sig")
+    return jp_df
+
+
+def ensure_default_jp_overrides_file():
+    """Funzione mantenuta solo per compatibilità.
+
+    Non crea più override: le rarità JP vengono ricavate dal sito ufficiale JP/Asia.
+    """
+    return None
+
 def enrich(df_cards, df_cm):
     df_cards = df_cards.copy()
     if "Numero" in df_cards.columns:
@@ -281,6 +342,7 @@ def enrich(df_cards, df_cm):
         merged = merged[merged["CM Product Type"].fillna("Standard") != "Promo"].copy()
         print(f"Promo escluse dal finale: {before - len(merged)}")
     merged["Numero"] = merged["Numero"].apply(format_number_text)
+    merged = apply_jp_official_corrections(merged)
     return merged
 
 
@@ -296,6 +358,8 @@ def main():
         backup_known_files(move=True)
     df_cm = load_cardmarket_prices(CARDMARKET_MERGED_CSV)
     sets = discover_sets()
+    # Rileggo sempre il catalogo JP: serve per rarità diverse da EN, senza forzature manuali.
+    scrape_jp_official_raw(sets, use_cache=False)
     existing = load_existing_raw()
     if not existing.empty and "Series ID" in existing.columns and "ID Carta" in existing.columns:
         existing = existing[existing["ID Carta"].notna() & (existing["ID Carta"].astype(str).str.strip() != "")]
@@ -352,6 +416,7 @@ def main():
     dedupe_final = [c for c in ["ID Carta", "Lingua", "Variante", "Cardmarket idProduct", "Espansione", "Numero", "Rarità", "Tipo carta", "Nome", "Color", "Card Set(s)"] if c in final_df.columns]
     if dedupe_final:
         final_df = final_df.drop_duplicates(subset=dedupe_final)
+    final_df = apply_jp_official_corrections(final_df)
     final_df = add_price_trends_from_latest_backup(final_df)
     save_price_trend_reports(final_df)
     final_df = sanitize_dataframe_for_excel(final_df)
@@ -359,6 +424,7 @@ def main():
     print(f"CSV finale intermedio: {FINAL_STG_CSV}")
     build_excel(final_df)
     save_final_json_from_df(final_df, "one_piece_collection_build.py")
+    append_value_history(final_df, "build")
     print("\nFinito.")
     print("File finali in out/:")
     print(f"- {OUTPUT_XLSX}")

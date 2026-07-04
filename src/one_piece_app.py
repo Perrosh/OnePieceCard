@@ -904,7 +904,7 @@ with tab_ai:
         height=90,
     )
 
-    if st.button("Rispondi dal database", type="primary", use_container_width=True):
+    if st.button("Cerca", type="primary", use_container_width=True):
         if not question.strip():
             st.warning("Scrivi una domanda prima di inviare.")
         else:

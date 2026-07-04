@@ -9,7 +9,6 @@ from collections import deque
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-import requests
 
 from one_piece_common import (
     PROJECT_ROOT,
@@ -57,12 +56,6 @@ st.set_page_config(
 
 ROOT = Path(PROJECT_ROOT)
 SRC = ROOT / "src"
-CONFIG_DIR = ROOT / "config"
-OPENAI_TOKEN_FILE = CONFIG_DIR / "openai_api_key.txt"
-OPENAI_MODEL_FILE = CONFIG_DIR / "openai_model.txt"
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-
-
 def euro(value):
     try:
         return f"€ {float(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -223,156 +216,187 @@ def latest_log_files(limit=5):
     return files[:limit]
 
 
-def ensure_config_dir():
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    gitkeep = CONFIG_DIR / ".gitkeep"
-    if not gitkeep.exists():
-        gitkeep.write_text("", encoding="utf-8")
+
+# =============================================================================
+# Interprete locale domande database: funziona senza servizi esterni.
+# =============================================================================
+
+def _qnorm(text):
+    text = str(text or "").lower()
+    repl = {"à": "a", "è": "e", "é": "e", "ì": "i", "ò": "o", "ù": "u", "’": "'", "–": "-", "—": "-"}
+    for a, b in repl.items():
+        text = text.replace(a, b)
+    return text
 
 
-def load_saved_token():
-    try:
-        if OPENAI_TOKEN_FILE.exists():
-            return OPENAI_TOKEN_FILE.read_text(encoding="utf-8").strip()
-    except Exception:
-        return ""
-    return ""
-
-
-def save_token(token):
-    ensure_config_dir()
-    token = str(token or "").strip()
-    if token:
-        OPENAI_TOKEN_FILE.write_text(token, encoding="utf-8")
-    elif OPENAI_TOKEN_FILE.exists():
-        OPENAI_TOKEN_FILE.unlink()
-
-
-def load_saved_model():
-    try:
-        if OPENAI_MODEL_FILE.exists():
-            return OPENAI_MODEL_FILE.read_text(encoding="utf-8").strip() or DEFAULT_OPENAI_MODEL
-    except Exception:
-        return DEFAULT_OPENAI_MODEL
-    return DEFAULT_OPENAI_MODEL
-
-
-def save_model(model):
-    ensure_config_dir()
-    model = str(model or DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
-    OPENAI_MODEL_FILE.write_text(model, encoding="utf-8")
-
-
-def build_ai_context(df, question, max_rows=250):
-    data = df.copy()
-    for col in ["Quantità", "Valore", "Valore totale", "Variazione valore"]:
-        if col in data.columns:
-            data[col] = pd.to_numeric(data[col], errors="coerce").fillna(0)
-
-    q = str(question or "").lower()
-    candidates = pd.DataFrame(columns=data.columns)
-
-    # Se nella domanda compare una espansione tipo OP03 / OP-03 / ST10, filtro prima quella.
+def _extract_intent_number(q, default=10):
     import re
-    patterns = set()
-    for match in re.findall(r"\b(OP|ST|EB|PRB)[- ]?(\d{1,2})\b", q, flags=re.IGNORECASE):
-        prefix, number = match
-        compact = f"{prefix.upper()}{int(number):02d}"
-        dashed = f"{prefix.upper()}-{int(number):02d}"
-        patterns.update({compact.lower(), dashed.lower()})
+    qn = _qnorm(q)
+    m = re.search(r"\btop\s*(\d{1,3})\b", qn)
+    if m:
+        return max(1, min(200, int(m.group(1))))
+    m = re.search(r"\b(prime|primi|mostra|vedere|lista|elenca)\s+(\d{1,3})\b", qn)
+    if m:
+        return max(1, min(200, int(m.group(2))))
+    return default
 
+
+def _extract_expansion_patterns(q):
+    import re
+    qn = _qnorm(q)
+    patterns = set()
+    for prefix, number in re.findall(r"\b(OP|ST|EB|PRB)[-\s]?(\d{1,2})\b", qn, flags=re.IGNORECASE):
+        prefix = prefix.upper()
+        n = int(number)
+        patterns.add(f"{prefix}{n:02d}".lower())
+        patterns.add(f"{prefix}-{n:02d}".lower())
+    for left, right in re.findall(r"\b(OP\d{1,2})[-\s]?(EB\d{1,2})\b", qn, flags=re.IGNORECASE):
+        patterns.add(f"{left.upper()}-{right.upper()}".lower())
+        patterns.add(f"{left.upper()}{right.upper()}".lower())
+    return patterns
+
+
+def _filter_database_from_question(df, q):
+    import re
+    data = df.copy()
+    qn = _qnorm(q)
+
+    wants_owned = any(w in qn for w in ["possed", "che ho", "mie carte", "mia collezione", "collezione", "quantita > 0"])
+    value_or_trend_question = any(w in qn for w in ["costos", "val", "prezz", "aument", "cal", "trend", "top"])
+    if (wants_owned or value_or_trend_question) and "Quantità" in data.columns:
+        data = data[pd.to_numeric(data["Quantità"], errors="coerce").fillna(0) > 0].copy()
+
+    patterns = _extract_expansion_patterns(qn)
     if patterns:
         mask = pd.Series(False, index=data.index)
         for col in ["ID Carta", "Espansione", "Set", "Codice", "Nome"]:
             if col in data.columns:
-                text = data[col].astype(str).str.lower().str.replace("-", "", regex=False)
+                text = data[col].astype(str).str.lower()
+                text_compact = text.str.replace("-", "", regex=False).str.replace(" ", "", regex=False)
                 for pat in patterns:
-                    mask = mask | text.str.contains(pat.replace("-", ""), na=False)
-        candidates = data[mask].copy()
+                    mask = mask | text.str.contains(pat, na=False)
+                    mask = mask | text_compact.str.contains(pat.replace("-", "").replace(" ", ""), na=False)
+        data = data[mask].copy()
 
-    # Altrimenti provo a cercare parole della domanda nei campi testuali più utili.
-    if candidates.empty:
-        words = [w for w in re.findall(r"[a-zA-Z0-9.\-]{3,}", q) if w not in {"qual", "quale", "carta", "carte", "costosa", "costose", "prezzo", "valore", "della", "del", "set"}]
-        if words:
-            mask = pd.Series(False, index=data.index)
-            for col in ["ID Carta", "Nome", "Espansione", "Rarità", "Lingua", "Variante", "Color", "Tipo carta"]:
-                if col in data.columns:
-                    text = data[col].astype(str).str.lower()
-                    for w in words:
-                        mask = mask | text.str.contains(re.escape(w.lower()), na=False)
-            candidates = data[mask].copy()
+    if re.search(r"\bjp\b|giappon", qn) and "Lingua" in data.columns:
+        data = data[data["Lingua"].astype(str).str.upper().eq("JP")].copy()
+    if re.search(r"\ben\b|ingles", qn) and "Lingua" in data.columns:
+        data = data[data["Lingua"].astype(str).str.upper().eq("EN")].copy()
 
-    if candidates.empty:
-        candidates = data.copy()
+    rarity_tokens = ["SEC", "SR", "R", "UC", "C", "L", "TR", "SP", "P", "DON"]
+    if "Rarità" in data.columns:
+        for rar in rarity_tokens:
+            if re.search(rf"\b{re.escape(rar.lower())}\b", qn):
+                data = data[data["Rarità"].astype(str).str.upper().eq(rar)].copy()
+                break
 
-    # Tengo le righe più informative, dando priorità a possedute e valore alto.
-    sort_cols = [c for c in ["Quantità", "Valore totale", "Valore"] if c in candidates.columns]
-    if sort_cols:
-        candidates = candidates.sort_values(sort_cols, ascending=[False] * len(sort_cols))
-
-    cols = [c for c in [
-        "ID Carta", "Espansione", "Numero", "Nome", "Lingua", "Variante", "Rarità", "Tipo carta", "Color",
-        "Quantità", "Valore", "Valore totale", "Valore precedente", "Variazione valore", "Variazione %", "Trend prezzo",
-        "Fonte prezzo", "Cardmarket idProduct"
-    ] if c in candidates.columns]
-
-    sample = candidates[cols].head(max_rows).where(pd.notna(candidates[cols].head(max_rows)), "").to_dict(orient="records")
-    summary = {
-        "numero_carte_totali_nel_database": int(len(data)),
-        "numero_carte_nel_contesto_inviato": int(len(sample)),
-        "nota": "I valori economici sono in euro. Rispondi solo usando il contesto fornito; se non basta, dillo chiaramente.",
-        "colonne_disponibili": list(data.columns),
-        "righe": sample,
-    }
-    return summary
+    colors = {"red": ["red", "rosso", "rossa"], "green": ["green", "verde"], "blue": ["blue", "blu"], "purple": ["purple", "viola"], "black": ["black", "nero", "nera"], "yellow": ["yellow", "giallo", "gialla"]}
+    color_col = "Color" if "Color" in data.columns else ("Colore" if "Colore" in data.columns else None)
+    if color_col:
+        for canonical, words in colors.items():
+            if any(w in qn for w in words):
+                data = data[data[color_col].astype(str).str.lower().str.contains(canonical, na=False)].copy()
+                break
+    return data
 
 
-def ask_openai_about_collection(question, df, token, model):
-    context = build_ai_context(df, question)
-    system_prompt = (
-        "Sei un assistente per una collezione One Piece Card Game. "
-        "Rispondi in italiano, in modo pratico e breve. "
-        "Usa solo i dati JSON forniti nel messaggio. "
-        "I valori sono in euro. Se la domanda richiede un dato non presente, dillo chiaramente."
-    )
-    user_payload = {
-        "domanda": question,
-        "contesto_collezione": context,
-    }
-    response = requests.post(
-        "https://api.openai.com/v1/responses",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model or DEFAULT_OPENAI_MODEL,
-            "input": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-            ],
-            "temperature": 0.1,
-        },
-        timeout=90,
-    )
-    if response.status_code >= 400:
-        raise RuntimeError(f"Errore API {response.status_code}: {response.text[:1000]}")
-    payload = response.json()
+def _answer_with_table(title, df, columns=None, max_rows=10):
+    if columns is None:
+        columns = [c for c in ["ID Carta", "Espansione", "Numero", "Nome", "Lingua", "Variante", "Rarità", "Quantità", "Valore", "Valore totale", "Variazione valore", "Trend prezzo"] if c in df.columns]
+    shown = df[columns].head(max_rows).copy() if columns else df.head(max_rows).copy()
+    rename = {"Valore": "Valore (€)", "Valore totale": "Valore totale (€)", "Variazione valore": "Variazione valore (€)"}
+    shown = shown.rename(columns={k: v for k, v in rename.items() if k in shown.columns})
+    return title, shown
 
-    # Responses API: spesso espone output_text, ma tengo fallback difensivi.
-    if isinstance(payload, dict) and payload.get("output_text"):
-        return str(payload["output_text"]).strip()
-    parts = []
-    for item in payload.get("output", []) if isinstance(payload, dict) else []:
-        for content in item.get("content", []) if isinstance(item, dict) else []:
-            if isinstance(content, dict):
-                text = content.get("text") or content.get("value")
-                if text:
-                    parts.append(str(text))
-    if parts:
-        return "\n".join(parts).strip()
-    return json.dumps(payload, ensure_ascii=False, indent=2)[:3000]
 
+def answer_local_database_question(question, df):
+    import re
+    q = str(question or "").strip()
+    qn = _qnorm(q)
+    if not q:
+        return False, "", None
+    data = df.copy()
+    for col in ["Quantità", "Valore", "Valore totale", "Valore precedente", "Variazione valore", "Variazione %"]:
+        if col in data.columns:
+            data[col] = pd.to_numeric(data[col], errors="coerce").fillna(0)
+    if "Valore totale" not in data.columns and {"Quantità", "Valore"}.issubset(data.columns):
+        data["Valore totale"] = data["Quantità"] * data["Valore"]
+    filtered = _filter_database_from_question(data, q)
+    n = _extract_intent_number(q, default=10)
+    if filtered.empty:
+        return True, "Non ho trovato carte che rispettano i filtri della domanda.", None
+
+    if any(w in qn for w in ["quante", "numero", "conteggio"]):
+        owned = int((pd.to_numeric(filtered.get("Quantità", 0), errors="coerce").fillna(0) > 0).sum()) if "Quantità" in filtered.columns else 0
+        qty = int(pd.to_numeric(filtered.get("Quantità", 0), errors="coerce").fillna(0).sum()) if "Quantità" in filtered.columns else 0
+        total = float(pd.to_numeric(filtered.get("Valore totale", 0), errors="coerce").fillna(0).sum()) if "Valore totale" in filtered.columns else 0.0
+        msg = f"Ho trovato **{len(filtered)} carte** nel filtro richiesto. Carte possedute: **{owned}**. Quantità totale: **{qty}**. Valore posseduto: **€ {total:,.2f}**.".replace(",", "X").replace(".", ",").replace("X", ".")
+        return True, msg, None
+
+    if any(w in qn for w in ["valore totale", "quanto vale", "totale collezione", "valore collezione"]):
+        total = float(pd.to_numeric(filtered.get("Valore totale", 0), errors="coerce").fillna(0).sum()) if "Valore totale" in filtered.columns else 0.0
+        msg = f"Il valore totale delle carte nel filtro richiesto è **€ {total:,.2f}**.".replace(",", "X").replace(".", ",").replace("X", ".")
+        return True, msg, None
+
+    if any(w in qn for w in ["aument", "salit", "cresciut"]):
+        if "Variazione valore" not in filtered.columns:
+            return True, "Nel database non trovo la colonna `Variazione valore` per calcolare gli aumenti.", None
+        out = filtered[pd.to_numeric(filtered["Variazione valore"], errors="coerce").fillna(0) > 0].sort_values("Variazione valore", ascending=False)
+        title, table = _answer_with_table(f"Top {min(n, len(out))} carte in aumento", out, max_rows=n)
+        return True, title, table
+
+    if any(w in qn for w in ["cal", "sces", "diminuit", "ribass"]):
+        if "Variazione valore" not in filtered.columns:
+            return True, "Nel database non trovo la colonna `Variazione valore` per calcolare i cali.", None
+        out = filtered[pd.to_numeric(filtered["Variazione valore"], errors="coerce").fillna(0) < 0].sort_values("Variazione valore", ascending=True)
+        title, table = _answer_with_table(f"Top {min(n, len(out))} carte in calo", out, max_rows=n)
+        return True, title, table
+
+    if any(w in qn for w in ["costos", "car", "valgono", "vale di piu", "piu valore", "top"]):
+        use_total = any(w in qn for w in ["valore totale", "valore posseduto", "quantita", "complessivo", "totale"])
+        sort_col = "Valore totale" if use_total and "Valore totale" in filtered.columns else "Valore"
+        if sort_col not in filtered.columns:
+            return True, f"Nel database non trovo la colonna `{sort_col}`.", None
+        out = filtered.sort_values(sort_col, ascending=False)
+        if any(w in qn for w in ["qual e", "quale", "piu costosa", "piu cara", "massima", "massimo"]) and not re.search(r"\btop\s*\d+", qn):
+            top = out.head(1)
+            row = top.iloc[0]
+            name = row.get("Nome", "Carta")
+            cid = row.get("ID Carta", "")
+            exp = row.get("Espansione", "")
+            lang = row.get("Lingua", "")
+            var = row.get("Variante", "")
+            qty = row.get("Quantità", "")
+            val = float(row.get(sort_col, 0) or 0)
+            label = "valore posseduto" if sort_col == "Valore totale" else "valore unitario"
+            msg = f"La carta più alta nel filtro richiesto è **{name}**"
+            details = [str(x) for x in [cid, exp, lang, var] if str(x or "").strip()]
+            if details:
+                msg += " (" + " | ".join(details) + ")"
+            msg += f", con {label} **€ {val:,.2f}**".replace(",", "X").replace(".", ",").replace("X", ".")
+            if qty != "":
+                msg += f". Quantità: **{qty}**."
+            return True, msg, _answer_with_table("Dettaglio", top, max_rows=1)[1]
+        title, table = _answer_with_table(f"Top {min(n, len(out))} carte per {sort_col.lower()} (€)", out, max_rows=n)
+        return True, title, table
+
+    if any(w in qn for w in ["possed", "che ho", "lista", "elenca", "mostra"]):
+        sort_col = "Valore totale" if "Valore totale" in filtered.columns else filtered.columns[0]
+        out = filtered.sort_values(sort_col, ascending=False)
+        title, table = _answer_with_table(f"Prime {min(n, len(out))} carte trovate", out, max_rows=n)
+        return True, title, table
+
+    examples = """Posso rispondere localmente a domande tipo:
+
+- `qual è la carta più costosa dell'espansione OP03 tra le carte che possiedo?`
+- `top 10 carte OP16 per valore posseduto`
+- `quali carte JP possiedo che valgono di più?`
+- `quante carte SEC possiedo?`
+- `top 5 carte in aumento`
+- `valore totale OP03`
+
+Le domande non riconosciute mostrano questi esempi: il motore è locale e basato sui campi del database."""
+    return True, examples, None
 
 
 st.title("🏴‍☠️ One Piece Card Collection")
@@ -431,7 +455,7 @@ st.caption("Nota generale: i KPI e i grafici di valore/trend considerano le cart
 
 st.markdown("### Indice dashboard")
 st.markdown(
-    "Usa le schede qui sotto come indice rapido: **Panoramica**, **Top valore**, **Trend prezzi**, **Gestione carte**, **Domande IA**, **File e log**."
+    "Usa le schede qui sotto come indice rapido: **Panoramica**, **Top valore**, **Trend prezzi**, **Gestione carte**, **Domande database**, **File e log**."
 )
 
 tab_overview, tab_top_value, tab_trends, tab_cards, tab_ai, tab_files = st.tabs([
@@ -439,7 +463,7 @@ tab_overview, tab_top_value, tab_trends, tab_cards, tab_ai, tab_files = st.tabs(
     "💰 Top valore",
     "📈 Trend prezzi",
     "🃏 Gestione carte",
-    "🤖 Domande IA",
+    "🔎 Domande database",
     "📁 File e log",
 ])
 
@@ -871,57 +895,35 @@ with tab_cards:
                 st.error(f"Errore durante il salvataggio modifiche: {exc}")
 
 with tab_ai:
-    st.header("Domande sulla collezione con IA")
-    st.caption("Se configuri un token OpenAI, puoi fare domande testuali sui dati caricati. Il token viene salvato localmente in config/openai_api_key.txt, file escluso da Git.")
-    with st.expander("Configura IA e fai una domanda", expanded=True):
-        saved_token = load_saved_token()
-        saved_model = load_saved_model()
-        masked = "Token salvato" if saved_token else "Nessun token salvato"
-        st.info(masked)
+    st.header("Domande sul database")
+    st.caption("Questa sezione funziona in locale: interpreta la domanda con regole e Pandas, senza chiamate esterne.")
 
-        c_ai1, c_ai2 = st.columns([2, 1])
-        with c_ai1:
-            token_input = st.text_input("OpenAI API token", value="", type="password", placeholder="sk-...", help="Lascia vuoto per non modificare il token salvato.")
-        with c_ai2:
-            model_input = st.text_input("Modello", value=saved_model or DEFAULT_OPENAI_MODEL)
+    question = st.text_area(
+        "Domanda",
+        placeholder="Esempio: qual è la carta più costosa dell'espansione OP03 tra le carte che possiedo?",
+        height=90,
+    )
 
-        b_ai1, b_ai2 = st.columns([1, 1])
-        with b_ai1:
-            if st.button("Salva token/modello", use_container_width=True):
-                try:
-                    if token_input.strip():
-                        save_token(token_input)
-                    save_model(model_input)
-                    st.success("Configurazione IA salvata in config/.")
-                except Exception as exc:
-                    st.error(f"Errore salvataggio configurazione IA: {exc}")
-        with b_ai2:
-            if st.button("Rimuovi token salvato", use_container_width=True):
-                try:
-                    save_token("")
-                    st.success("Token rimosso.")
-                except Exception as exc:
-                    st.error(f"Errore rimozione token: {exc}")
+    if st.button("Rispondi dal database", type="primary", use_container_width=True):
+        if not question.strip():
+            st.warning("Scrivi una domanda prima di inviare.")
+        else:
+            handled, answer, answer_df = answer_local_database_question(question, collection)
+            st.markdown(answer)
+            if answer_df is not None and not answer_df.empty:
+                st.dataframe(answer_df, use_container_width=True, hide_index=True)
 
-        question = st.text_area("Domanda", placeholder="Esempio: qual è la carta più costosa del set OP03?", height=90)
-        if st.button("Chiedi all'IA", type="primary", use_container_width=True):
-            token = token_input.strip() or load_saved_token()
-            model = (model_input or load_saved_model() or DEFAULT_OPENAI_MODEL).strip()
-            if not token:
-                st.warning("Sezione disponibile solo impostando un token OpenAI. Inseriscilo qui sopra e premi Salva token/modello.")
-            elif not question.strip():
-                st.warning("Scrivi una domanda prima di inviare.")
-            else:
-                with st.spinner("Interrogo l'IA sui dati della collezione..."):
-                    try:
-                        answer = ask_openai_about_collection(question, collection, token, model)
-                        st.markdown(answer)
-                    except Exception as exc:
-                        msg = str(exc)
-                        if "insufficient_quota" in msg or "quota" in msg.lower():
-                            st.error("Quota API OpenAI esaurita o billing API non configurato. La dashboard funziona comunque senza IA.")
-                        else:
-                            st.error(f"Errore chiamata IA: {exc}")
+    with st.expander("Esempi di domande supportate"):
+        st.markdown(
+            """
+            - qual è la carta più costosa dell'espansione OP03 tra le carte che possiedo?
+            - top 10 carte OP16 per valore posseduto
+            - quali carte JP possiedo che valgono di più?
+            - quante carte SEC possiedo?
+            - top 5 carte in aumento
+            - valore totale OP03
+            """
+        )
 
 with tab_files:
     st.header("File e log")

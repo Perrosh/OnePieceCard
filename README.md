@@ -109,7 +109,7 @@ Apre una dashboard nel browser con:
 - KPI valore/quantità;
 - grafici per rarità, lingua, trend prezzo ed espansione;
 - Top X in aumento/calo configurabile dall’utente;
-- dashboard organizzata in schede/indice: Panoramica, Top valore, Trend prezzi, Gestione carte, Domande IA, File e log;
+- dashboard organizzata in schede/indice: Panoramica, Top valore, Trend prezzi, Gestione carte, Domande database, File e log;
 - tabella filtrabile e modificabile in tutti i campi visibili;
 - aggiunta manuale di nuove carte;
 - eliminazione manuale di carte selezionate;
@@ -127,7 +127,7 @@ La dashboard web è organizzata in schede che funzionano da indice rapido:
 - **Top valore**: Top X carte per valore, con numero scelto dall’utente;
 - **Trend prezzi**: Top X aumenti/cali, con numero scelto dall’utente, e storico valore;
 - **Gestione carte**: modifica tabella, aggiunta ed eliminazione carte;
-- **Domande IA**: sezione opzionale con token OpenAI locale;
+- **Domande database**: domande locali sulla collezione, senza chiamate esterne;
 - **File e log**: download finali e consultazione log.
 
 La sezione **Trend prezzi** indica una sola volta che i confronti sono calcolati sulle carte possedute (`Quantità > 0`), poi i grafici usano titoli più puliti come `Top X in aumento` e `Top X in calo`.
@@ -332,26 +332,19 @@ Puoi ordinare per:
 
 Di default la classifica considera solo le carte possedute. Puoi includere anche le carte non possedute con l'apposita checkbox.
 
-### Domande con IA
+### Domande sul database
 
-La dashboard contiene una sezione opzionale per fare domande testuali sulla collezione, ad esempio:
+La dashboard contiene una sezione per fare domande testuali sulla collezione. Non usa servizi esterni e non invia dati fuori dal PC: usa un interprete locale basato su regole e Pandas.
 
-```text
-qual è la carta più costosa del set OP03?
-```
-
-Questa funzione è disponibile solo se imposti un token OpenAI dalla dashboard. Il token viene salvato localmente in:
+Esempi supportati localmente:
 
 ```text
-config/openai_api_key.txt
+qual è la carta più costosa dell'espansione OP03 tra le carte che possiedo?
+top 10 carte OP16 per valore posseduto
+quali carte JP possiedo che valgono di più?
+quante carte SEC possiedo?
+top 5 carte in aumento
+valore totale OP03
 ```
 
-Il modello viene salvato in:
-
-```text
-config/openai_model.txt
-```
-
-La cartella `config/` è inclusa nel progetto solo con `.gitkeep`, mentre i file con token e configurazioni locali sono esclusi da Git tramite `.gitignore`. Non caricare mai il token su GitHub.
-
-La risposta dell'IA viene generata usando solo un estratto dei dati della collezione caricata dalla dashboard. Se la domanda riguarda un set o una carta specifica, la dashboard prova a inviare all'IA solo le righe rilevanti.
+La dashboard capisce filtri come espansione (`OP03`, `OP-03`, `ST10`), lingua (`JP`, `EN`), rarità (`SEC`, `SR`, `TR`), carte possedute (`Quantità > 0`), valore unitario, valore posseduto, aumenti e cali.

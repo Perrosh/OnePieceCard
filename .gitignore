@@ -18,3 +18,7 @@ bkp/*
 # IDE
 .idea/
 .vscode/
+
+# Local AI/API configuration
+config/*
+!config/.gitkeep

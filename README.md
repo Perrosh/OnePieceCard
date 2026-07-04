@@ -10,7 +10,7 @@ Il progetto crea e aggiorna un file Excel con:
 - valore totale;
 - dashboard Excel con KPI e grafici;
 - confronto prezzo rispetto all'ultimo JSON finale salvato in backup;
-- report Top 5 carte in aumento e Top 5 carte in calo;
+- report e grafici configurabili per le carte in aumento/calo;
 - dashboard web locale opzionale con Streamlit;
 - storico del valore collezione nel tempo in `stg/value_history.csv`.
 
@@ -108,13 +108,29 @@ Apre una dashboard nel browser con:
 
 - KPI valore/quantità;
 - grafici per rarità, lingua, trend prezzo ed espansione;
-- Top 5 in aumento;
-- Top 5 in calo;
+- Top X in aumento/calo configurabile dall’utente;
+- dashboard organizzata in schede/indice: Panoramica, Top valore, Trend prezzi, Gestione carte, Domande IA, File e log;
 - tabella filtrabile e modificabile in tutti i campi visibili;
+- aggiunta manuale di nuove carte;
+- eliminazione manuale di carte selezionate;
 - pulsanti per lanciare build/update/sync;
 - download di Excel e JSON;
 - visualizzazione degli ultimi log;
 - log live mentre build/update/sync sono in esecuzione.
+
+
+## Organizzazione dashboard Streamlit
+
+La dashboard web è organizzata in schede che funzionano da indice rapido:
+
+- **Panoramica**: KPI principali e grafici generali;
+- **Top valore**: Top X carte per valore, con numero scelto dall’utente;
+- **Trend prezzi**: Top X aumenti/cali, con numero scelto dall’utente, e storico valore;
+- **Gestione carte**: modifica tabella, aggiunta ed eliminazione carte;
+- **Domande IA**: sezione opzionale con token OpenAI locale;
+- **File e log**: download finali e consultazione log.
+
+La sezione **Trend prezzi** indica una sola volta che i confronti sono calcolati sulle carte possedute (`Quantità > 0`), poi i grafici usano titoli più puliti come `Top X in aumento` e `Top X in calo`.
 
 ## Output finali
 
@@ -132,7 +148,7 @@ L'Excel contiene:
 - foglio `Dashboard`;
 - KPI principali;
 - grafici;
-- Top 5 aumenti/cali;
+- Top aumenti/cali;
 - riepiloghi per rarità, colore, lingua, espansione.
 
 ## Confronto prezzi
@@ -219,6 +235,12 @@ out/one_piece_collection.xlsx
 Prima del salvataggio viene creato un backup automatico.
 Il campo `Valore totale` viene ricalcolato da `Quantità × Valore`.
 
+Nella sezione `Aggiungi carta / Elimina carta` puoi anche:
+
+- inserire una nuova carta manuale compilando ID, nome, lingua, rarità, quantità e valore;
+- eliminare una carta specifica dopo conferma;
+- salvare subito JSON ed Excel finali con backup automatico.
+
 ## Storico valore
 
 Ogni build, update, sync o salvataggio da Streamlit aggiunge un punto a:
@@ -283,49 +305,11 @@ ma mantiene le cartelle grazie ai `.gitkeep`.
 - Al primo run non esiste ancora un confronto prezzi precedente.
 - Dal secondo run in poi la dashboard mostra aumento/calo rispetto al JSON precedente.
 
-## Modifica quantità da Streamlit
-
-Nella dashboard web, la tabella carte è modificabile solo nella colonna `Quantità`.
-
-Procedura:
-
-1. filtra o cerca la carta;
-2. modifica il valore nella colonna `Quantità`;
-3. premi `Salva quantità`;
-4. il programma aggiorna automaticamente:
-   - `out/one_piece_collection.json`
-   - `out/one_piece_collection.xlsx`
-5. prima del salvataggio viene creato un backup automatico dei file finali esistenti.
-
-I campi economici nella dashboard web sono indicati in euro:
-
-```text
-Valore (€)
-Valore totale (€)
-Valore precedente (€)
-Variazione valore (€)
-```
-
-Nota: le quantità modificate da Streamlit vengono mantenute anche nei successivi `update_values` e `sync`.
-
-
 ## Note JP e storico valore
 
-Il catalogo inglese e quello giapponese possono avere rarità diverse. Il progetto scarica/cachea il catalogo JP in `stg/bandai_cards_jp_raw.csv` e applica le correzioni solo alle righe `Lingua = JP`.
+Il catalogo inglese e quello giapponese possono avere rarità diverse. Il progetto scarica/cachea il catalogo JP in `stg/bandai_cards_jp_raw.csv` e applica le rarità JP solo alle righe `Lingua = JP`, senza override hardcoded.
 
-È presente anche un file override modificabile:
-
-```text
-stg/jp_rarity_overrides.csv
-```
-
-Contiene almeno il caso noto:
-
-```text
-OP16-042 Prisoner of Impel Down JP = TR
-```
-
-Ogni build/update/sync e ogni salvataggio quantità da Streamlit aggiunge un punto in:
+Ogni build/update/sync e ogni salvataggio da Streamlit aggiunge un punto in:
 
 ```text
 stg/value_history.csv
@@ -334,3 +318,40 @@ stg/value_history.csv
 Streamlit mostra il grafico `Valore collezione nel tempo (€)`.
 
 I JSON Cardmarket non vengono più cercati nelle pagine HTML: vengono scaricati direttamente dagli URL S3 configurati in `one_piece_common.py`.
+
+
+## Novità dashboard Streamlit
+
+### Top X carte per valore
+
+Nella dashboard puoi scegliere quante carte mostrare nella classifica, per esempio Top 5, Top 10 o Top 25.
+Puoi ordinare per:
+
+- **Valore posseduto (€)**: usa `Quantità × Valore`;
+- **Valore singola carta (€)**: usa il valore unitario della carta.
+
+Di default la classifica considera solo le carte possedute. Puoi includere anche le carte non possedute con l'apposita checkbox.
+
+### Domande con IA
+
+La dashboard contiene una sezione opzionale per fare domande testuali sulla collezione, ad esempio:
+
+```text
+qual è la carta più costosa del set OP03?
+```
+
+Questa funzione è disponibile solo se imposti un token OpenAI dalla dashboard. Il token viene salvato localmente in:
+
+```text
+config/openai_api_key.txt
+```
+
+Il modello viene salvato in:
+
+```text
+config/openai_model.txt
+```
+
+La cartella `config/` è inclusa nel progetto solo con `.gitkeep`, mentre i file con token e configurazioni locali sono esclusi da Git tramite `.gitignore`. Non caricare mai il token su GitHub.
+
+La risposta dell'IA viene generata usando solo un estratto dei dati della collezione caricata dalla dashboard. Se la domanda riguarda un set o una carta specifica, la dashboard prova a inviare all'IA solo le righe rilevanti.

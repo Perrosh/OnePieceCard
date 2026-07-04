@@ -1243,21 +1243,29 @@ def add_price_trends_from_latest_backup(df, previous_json_path=None):
     """
     out = df.copy()
 
-    for col in ["Valore", "Cardmarket idProduct", "ID Carta", "Lingua", "Variante"]:
+    for col in ["Valore", "Cardmarket idProduct", "ID Carta", "Lingua", "Variante", "Quantità"]:
         if col not in out.columns:
             out[col] = ""
 
     previous_json_path = previous_json_path or find_latest_backup_output_json()
     comparison_time = datetime.now().isoformat(timespec="seconds")
 
+    # Il confronto prezzi è sensato solo per le carte possedute.
+    # Le carte con Quantità = 0 restano fuori dai trend, top aumenti/cali e delta netto.
+    if "Quantità" not in out.columns:
+        out["Quantità"] = 0
+    owned_mask = pd.to_numeric(out["Quantità"], errors="coerce").fillna(0) > 0
+
     if not previous_json_path:
         out["Valore precedente"] = ""
         out["Variazione valore"] = ""
         out["Variazione %"] = ""
-        out["Trend prezzo"] = "Nessun confronto"
+        out["Trend prezzo"] = "Non posseduta"
+        out.loc[owned_mask, "Trend prezzo"] = "Nessun confronto"
         out["Data confronto"] = comparison_time
-        out["Fonte confronto"] = "Nessun JSON finale precedente in bkp/"
+        out["Fonte confronto"] = "Confronto eseguito solo sulle carte possedute. Nessun JSON finale precedente in bkp/."
         print("Confronto prezzi: nessun JSON finale precedente trovato in bkp/.")
+        print(f"Carte possedute confrontabili: {int(owned_mask.sum())} / {len(out)}")
         return out
 
     cards = load_collection_json_cards(previous_json_path)
@@ -1278,6 +1286,16 @@ def add_price_trends_from_latest_backup(df, previous_json_path=None):
         if pd.isna(current):
             current = 0.0
         current = float(current)
+        qty = pd.to_numeric(row.get("Quantità", 0), errors="coerce")
+        if pd.isna(qty):
+            qty = 0
+        if float(qty) <= 0:
+            prev_values.append("")
+            deltas.append("")
+            pct_deltas.append("")
+            trends.append("Non posseduta")
+            sources.append("Confronto escluso: carta non posseduta")
+            continue
 
         previous = None
         source = ""
@@ -1327,8 +1345,9 @@ def add_price_trends_from_latest_backup(df, previous_json_path=None):
     out["Fonte confronto"] = sources
 
     compared = sum(1 for x in trends if x in ["In aumento", "In calo", "Stabile"])
+    owned = sum(1 for x in trends if x != "Non posseduta")
     print(f"Confronto prezzi: usato JSON precedente {previous_json_path}")
-    print(f"Righe confrontate: {compared} / {len(out)}")
+    print(f"Carte possedute confrontate: {compared} / {owned}. Carte non possedute escluse: {len(out) - owned}")
     return out
 
 
@@ -1336,11 +1355,14 @@ def save_price_trend_reports(df):
     data = df.copy()
     if "Variazione valore" not in data.columns:
         return
+    if "Quantità" not in data.columns:
+        data["Quantità"] = 0
+    data = data[pd.to_numeric(data["Quantità"], errors="coerce").fillna(0) > 0].copy()
     data["_delta"] = pd.to_numeric(data["Variazione valore"], errors="coerce")
     data["_abs_delta"] = data["_delta"].abs()
     data.to_csv(PRICE_TREND_REPORT_CSV, index=False, encoding="utf-8-sig")
 
-    cols = [c for c in ["ID Carta", "Espansione", "Numero", "Nome", "Lingua", "Variante", "Valore precedente", "Valore", "Variazione valore", "Variazione %", "Trend prezzo"] if c in data.columns]
+    cols = [c for c in ["ID Carta", "Espansione", "Numero", "Nome", "Lingua", "Variante", "Quantità", "Valore precedente", "Valore", "Variazione valore", "Variazione %", "Trend prezzo"] if c in data.columns]
     top_up = data[data["_delta"] > 0].sort_values("_delta", ascending=False).head(5)[cols]
     top_down = data[data["_delta"] < 0].sort_values("_delta", ascending=True).head(5)[cols]
     top_up.to_csv(TOP_5_AUMENTI_CSV, index=False, encoding="utf-8-sig")
@@ -1507,13 +1529,13 @@ def create_collection_workbook_with_dashboard(df, output_xlsx=OUTPUT_XLSX):
         ("I4", "Carte EN", f'=COUNTIF({lang_r},"EN")'),
         ("K4", "Carte JP", f'=COUNTIF({lang_r},"JP")'),
         ("M4", "Carte con prezzo", f'=COUNTIF({v_r},">0")'),
-        ("A7", "In aumento", f'=COUNTIF({trend_r},"In aumento")'),
-        ("C7", "In calo", f'=COUNTIF({trend_r},"In calo")'),
-        ("E7", "Stabili", f'=COUNTIF({trend_r},"Stabile")'),
-        ("G7", "Nuove/non confrontate", f'=COUNTIF({trend_r},"Nuova / non confrontata")'),
-        ("I7", "Somma aumenti", f'=SUMIF({delta_r},">0",{delta_r})'),
-        ("K7", "Somma cali", f'=SUMIF({delta_r},"<0",{delta_r})'),
-        ("M7", "Delta netto", f'=SUM({delta_r})'),
+        ("A7", "In aumento possedute", f'=COUNTIFS({trend_r},"In aumento",{q_r},">0")'),
+        ("C7", "In calo possedute", f'=COUNTIFS({trend_r},"In calo",{q_r},">0")'),
+        ("E7", "Stabili possedute", f'=COUNTIFS({trend_r},"Stabile",{q_r},">0")'),
+        ("G7", "Nuove/non confrontate possedute", f'=COUNTIFS({trend_r},"Nuova / non confrontata",{q_r},">0")'),
+        ("I7", "Somma aumenti possedute", f'=SUMIFS({delta_r},{delta_r},">0",{q_r},">0")'),
+        ("K7", "Somma cali possedute", f'=SUMIFS({delta_r},{delta_r},"<0",{q_r},">0")'),
+        ("M7", "Delta netto possedute", f'=SUMIFS({delta_r},{q_r},">0")'),
     ]
     for cell, label, formula in kpis:
         letters = re.match(r"([A-Z]+)", cell).group(1)
@@ -1526,7 +1548,7 @@ def create_collection_workbook_with_dashboard(df, output_xlsx=OUTPUT_XLSX):
         dash[val_cell].font = Font(size=14, bold=True)
         dash[val_cell].fill = PatternFill("solid", fgColor="D9EAF7")
         dash[val_cell].alignment = Alignment(horizontal="center")
-        if label in ["Valore totale", "Somma aumenti", "Somma cali", "Delta netto"]:
+        if label in ["Valore totale", "Somma aumenti possedute", "Somma cali possedute", "Delta netto possedute"]:
             dash[val_cell].number_format = '€ #,##0.00'
 
     # Tabelle riassuntive
@@ -1553,8 +1575,8 @@ def create_collection_workbook_with_dashboard(df, output_xlsx=OUTPUT_XLSX):
     for r, item in enumerate(trend_items, start=trend_start + 2):
         dash.cell(r, 1).value = item
         ref = dash.cell(r, 1).coordinate
-        dash.cell(r, 2).value = f'=COUNTIF({trend_r},{ref})'
-        dash.cell(r, 3).value = f'=SUMIF({trend_r},{ref},{delta_r})'
+        dash.cell(r, 2).value = f'=COUNTIFS({trend_r},{ref},{q_r},">0")'
+        dash.cell(r, 3).value = f'=SUMIFS({delta_r},{trend_r},{ref},{q_r},">0")'
         dash.cell(r, 3).number_format = '€ #,##0.00'
     trend_header = trend_start + 1
     trend_last = trend_start + 1 + len(trend_items)
@@ -1574,7 +1596,10 @@ def create_collection_workbook_with_dashboard(df, output_xlsx=OUTPUT_XLSX):
             cell.fill = PatternFill("solid", fgColor="5B9BD5")
 
     top_df = data.copy()
+    if "Quantità" in top_df.columns:
+        top_df = top_df[pd.to_numeric(top_df["Quantità"], errors="coerce").fillna(0) > 0].copy()
     top_df["_delta"] = pd.to_numeric(top_df["Variazione valore"], errors="coerce")
+    top_df = top_df[pd.to_numeric(top_df.get("Quantità", 0), errors="coerce").fillna(0) > 0].copy()
     top_up = top_df[top_df["_delta"] > 0].sort_values("_delta", ascending=False).head(5)
     top_down = top_df[top_df["_delta"] < 0].sort_values("_delta", ascending=True).head(5)
     for idx, (_, row) in enumerate(top_up.iterrows(), start=top_start + 2):
@@ -1622,7 +1647,7 @@ def create_collection_workbook_with_dashboard(df, output_xlsx=OUTPUT_XLSX):
         dash.add_chart(chart1, f"H{chart_anchor_row}")
     if trend_last > trend_header:
         chart2 = BarChart()
-        chart2.title = "Andamento prezzi per numero carte"
+        chart2.title = "Andamento prezzi carte possedute"
         chart2.y_axis.title = "Carte"
         chart2.x_axis.title = "Trend"
         chart2.height = 8
@@ -1647,6 +1672,8 @@ def create_collection_workbook_with_dashboard(df, output_xlsx=OUTPUT_XLSX):
         "Modifica Quantità nel foglio Carte.",
         "La Dashboard viene rigenerata da build, update_values e sync.",
         "Il confronto prezzo usa l'ultimo out/one_piece_collection.json salvato in bkp/<timestamp>/out/.",
+        "Il confronto valori viene calcolato solo sulle carte possedute, Quantità > 0.",
+        "Aumenti, cali e delta prezzo vengono calcolati solo sulle carte possedute, cioè Quantità > 0.",
         "Se non esiste un JSON precedente, Trend prezzo mostra Nessun confronto.",
         "Gli intermedi e i report trend sono in stg/.",
         "I log sono in logs/."

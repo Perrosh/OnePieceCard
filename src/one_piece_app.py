@@ -54,6 +54,180 @@ st.set_page_config(
     layout="wide",
 )
 
+THEME_PALETTES = {
+    "Predefinito": {
+        "app": "linear-gradient(135deg, #f8fafc 0%, #eef2ff 45%, #f8fafc 100%)",
+        "sidebar": "linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%)",
+        "text": "#0f172a",
+        "muted": "#475569",
+        "card": "rgba(255,255,255,0.82)",
+        "border": "rgba(15,23,42,0.14)",
+        "tab": "rgba(15,23,42,0.06)",
+        "tab_selected": "rgba(37,99,235,0.16)",
+        "accent": "#2563eb",
+        "warning_bg": "rgba(245,158,11,0.16)",
+        "ok_bg": "rgba(34,197,94,0.12)",
+    },
+    "Chiaro": {
+        "app": "linear-gradient(135deg, #fff7ed 0%, #fefce8 45%, #eff6ff 100%)",
+        "sidebar": "linear-gradient(180deg, #fff7ed 0%, #ffffff 100%)",
+        "text": "#1f2937",
+        "muted": "#64748b",
+        "card": "rgba(255,255,255,0.88)",
+        "border": "rgba(31,41,55,0.13)",
+        "tab": "rgba(251,146,60,0.10)",
+        "tab_selected": "rgba(251,146,60,0.24)",
+        "accent": "#ea580c",
+        "warning_bg": "rgba(245,158,11,0.16)",
+        "ok_bg": "rgba(34,197,94,0.12)",
+    },
+    "Scuro": {
+        "app": "radial-gradient(circle at top left, #243447 0, #101722 38%, #0b1018 100%)",
+        "sidebar": "linear-gradient(180deg, #111827 0%, #0b1220 100%)",
+        "text": "#edf2f7",
+        "muted": "#cbd5e1",
+        "card": "rgba(255,255,255,0.07)",
+        "border": "rgba(255,255,255,0.12)",
+        "tab": "rgba(255,255,255,0.06)",
+        "tab_selected": "rgba(255,255,255,0.18)",
+        "accent": "#38bdf8",
+        "warning_bg": "rgba(245,158,11,0.18)",
+        "ok_bg": "rgba(34,197,94,0.14)",
+    },
+    "Mare": {
+        "app": "radial-gradient(circle at top left, #0f766e 0%, #083344 42%, #020617 100%)",
+        "sidebar": "linear-gradient(180deg, #042f2e 0%, #020617 100%)",
+        "text": "#ecfeff",
+        "muted": "#a7f3d0",
+        "card": "rgba(20,184,166,0.13)",
+        "border": "rgba(125,211,252,0.26)",
+        "tab": "rgba(20,184,166,0.13)",
+        "tab_selected": "rgba(45,212,191,0.28)",
+        "accent": "#2dd4bf",
+        "warning_bg": "rgba(251,191,36,0.18)",
+        "ok_bg": "rgba(45,212,191,0.16)",
+    },
+    "Wanted": {
+        "app": "linear-gradient(135deg, #3b2517 0%, #7c4a22 45%, #f4d19b 100%)",
+        "sidebar": "linear-gradient(180deg, #2b1a10 0%, #5b3419 100%)",
+        "text": "#fff7ed",
+        "muted": "#fed7aa",
+        "card": "rgba(120,53,15,0.28)",
+        "border": "rgba(254,215,170,0.34)",
+        "tab": "rgba(254,215,170,0.15)",
+        "tab_selected": "rgba(251,191,36,0.28)",
+        "accent": "#fbbf24",
+        "warning_bg": "rgba(251,191,36,0.22)",
+        "ok_bg": "rgba(34,197,94,0.14)",
+    },
+    "One Piece": {
+        "app": "radial-gradient(circle at top left, #0ea5e9 0%, #075985 26%, #111827 58%, #3b1d0f 100%)",
+        "sidebar": "linear-gradient(180deg, #0f172a 0%, #172554 46%, #451a03 100%)",
+        "text": "#fff7ed",
+        "muted": "#fde68a",
+        "card": "rgba(15, 23, 42, 0.58)",
+        "border": "rgba(251, 191, 36, 0.42)",
+        "tab": "rgba(14, 165, 233, 0.14)",
+        "tab_selected": "rgba(251, 191, 36, 0.24)",
+        "accent": "#facc15",
+        "warning_bg": "rgba(251, 191, 36, 0.20)",
+        "ok_bg": "rgba(34,197,94,0.16)",
+    },
+}
+
+if "dashboard_theme" not in st.session_state:
+    st.session_state["dashboard_theme"] = "One Piece"
+
+_header_left, _header_right = st.columns([6, 1.45], vertical_alignment="center")
+with _header_left:
+    st.title("🏴‍☠️ One Piece Card Collection")
+    st.caption("Dashboard locale per Excel, JSON, valori Cardmarket, trend prezzo, modifiche manuali e log di aggiornamento.")
+with _header_right:
+    selected_theme = st.selectbox(
+        "Tema",
+        list(THEME_PALETTES.keys()),
+        index=list(THEME_PALETTES.keys()).index(st.session_state.get("dashboard_theme", "One Piece")) if st.session_state.get("dashboard_theme", "One Piece") in THEME_PALETTES else list(THEME_PALETTES.keys()).index("One Piece"),
+        key="dashboard_theme",
+        label_visibility="collapsed",
+    )
+
+pal = THEME_PALETTES[selected_theme]
+st.markdown(
+    f"""
+    <style>
+    .stApp {{
+        background: {pal['app']};
+        color: {pal['text']};
+    }}
+    section[data-testid="stSidebar"] {{
+        background: {pal['sidebar']};
+    }}
+    .block-container {{
+        padding-top: 1.3rem;
+    }}
+    h1, h2, h3, h4, h5, h6, p, label, span {{
+        color: {pal['text']};
+    }}
+    div[data-testid="stMetric"] {{
+        background: {pal['card']};
+        border: 1px solid {pal['border']};
+        border-radius: 16px;
+        padding: 14px 16px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    }}
+    div[data-testid="stMetric"] label, div[data-testid="stMetric"] p {{
+        color: {pal['muted']} !important;
+    }}
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 8px;
+        background: {pal['card']};
+        border: 1px solid {pal['border']};
+        border-radius: 14px;
+        padding: 8px;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        background: {pal['tab']};
+        border-radius: 12px;
+        padding: 8px 14px;
+    }}
+    .stTabs [aria-selected="true"] {{
+        background: {pal['tab_selected']};
+        box-shadow: inset 0 -2px 0 {pal['accent']};
+    }}
+    div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {{
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid {pal['border']};
+    }}
+    .op-card {{
+        background: {pal['card']};
+        border: 1px solid {pal['border']};
+        border-radius: 16px;
+        padding: 14px 16px;
+        margin: 8px 0 14px 0;
+    }}
+    .op-warning {{
+        background: {pal['warning_bg']};
+        border: 1px solid rgba(245, 158, 11, 0.45);
+        border-radius: 14px;
+        padding: 12px 14px;
+        margin: 8px 0 12px 0;
+    }}
+    .op-ok {{
+        background: {pal['ok_bg']};
+        border: 1px solid rgba(34, 197, 94, 0.35);
+        border-radius: 14px;
+        padding: 12px 14px;
+        margin: 8px 0 12px 0;
+    }}
+    button[kind="primary"] {{
+        border: 1px solid {pal['accent']};
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 ROOT = Path(PROJECT_ROOT)
 SRC = ROOT / "src"
 def euro(value):
@@ -399,9 +573,6 @@ Le domande non riconosciute mostrano questi esempi: il motore è locale e basato
     return True, examples, None
 
 
-st.title("🏴‍☠️ One Piece Card Collection")
-st.caption("Dashboard locale per Excel, JSON, valori Cardmarket, trend prezzo, modifiche manuali e log di aggiornamento.")
-
 with st.sidebar:
     st.header("Comandi")
     st.write("Lancia gli script senza aprire PyCharm.")
@@ -652,54 +823,10 @@ with tab_trends:
 
 with tab_cards:
     st.header("Gestione carte")
-
-    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
-    filtered = collection.copy()
-
-    with filter_col1:
-        if "Lingua" in filtered.columns:
-            langs = sorted([x for x in filtered["Lingua"].dropna().astype(str).unique() if x.strip()])
-            selected_langs = st.multiselect("Lingua", langs, default=[])
-            if selected_langs:
-                filtered = filtered[filtered["Lingua"].isin(selected_langs)]
-
-    with filter_col2:
-        if "Espansione" in filtered.columns:
-            exps = sorted([x for x in filtered["Espansione"].dropna().astype(str).unique() if x.strip()])
-            selected_exps = st.multiselect("Espansione", exps, default=[])
-            if selected_exps:
-                filtered = filtered[filtered["Espansione"].isin(selected_exps)]
-
-    with filter_col3:
-        if "Rarità" in filtered.columns:
-            rarities = sorted([x for x in filtered["Rarità"].dropna().astype(str).unique() if x.strip()])
-            selected_rarities = st.multiselect("Rarità", rarities, default=[])
-            if selected_rarities:
-                filtered = filtered[filtered["Rarità"].isin(selected_rarities)]
-
-    with filter_col4:
-        owned_only = st.checkbox("Solo possedute")
-        if owned_only and "Quantità" in filtered.columns:
-            filtered = filtered[filtered["Quantità"] > 0]
-
-    search = st.text_input("Cerca per nome o ID")
-    if search:
-        s = search.lower().strip()
-        mask = pd.Series(False, index=filtered.index)
-        for col in ["ID Carta", "Nome", "Variante"]:
-            if col in filtered.columns:
-                mask = mask | filtered[col].astype(str).str.lower().str.contains(s, na=False)
-        filtered = filtered[mask]
-
-    preferred_cols = [
-        "ID Carta", "Espansione", "Numero", "Nome", "Lingua", "Variante", "Rarità", "Tipo carta", "Color", "Quantità",
-        "Valore", "Valore totale", "Valore precedente", "Variazione valore", "Variazione %", "Trend prezzo",
-        "Rarità JP ufficiale", "Rarità JP candidate", "Fonte rarità JP",
-    ]
-    show_cols = [c for c in preferred_cols if c in filtered.columns]
-    show_cols += [c for c in filtered.columns if c not in show_cols]
-
-    st.caption("Puoi modificare tutti i campi visibili. I valori economici sono in euro (€). Dopo la modifica premi Salva modifiche.")
+    st.markdown(
+        '<div class="op-card">Qui puoi filtrare, scegliere le colonne, modificare i dati, aggiungere righe, eliminare carte e rimuovere duplicati. I valori economici sono in euro (€).</div>',
+        unsafe_allow_html=True,
+    )
 
     def _safe_text(value):
         if pd.isna(value):
@@ -729,170 +856,448 @@ with tab_cards:
             return ""
         return text.split("-")[0]
 
-    manage_tab_edit, manage_tab_add_delete = st.tabs(["Modifica tabella", "Aggiungi / elimina"])
+    def _is_effectively_empty_row(row, ignore_cols=None):
+        ignore_cols = set(ignore_cols or [])
+        for col, val in row.items():
+            if col in ignore_cols:
+                continue
+            if pd.isna(val):
+                continue
+            if isinstance(val, (int, float)) and float(val) == 0:
+                continue
+            if str(val).strip() != "":
+                return False
+        return True
 
-    with manage_tab_add_delete:
-        st.caption("Usa questi comandi per aggiungere una carta manuale o rimuovere una carta specifica dalla collezione. Il salvataggio crea sempre un backup automatico.")
-        add_tab, del_tab = st.tabs(["Aggiungi nuova carta", "Elimina carta"])
+    def _normalise_card_id_fields(df):
+        out = df.copy()
+        if "ID Carta" in out.columns:
+            out["ID Carta"] = out["ID Carta"].astype(str).str.strip().str.upper().str.replace(".", "-", regex=False).str.replace("_", "-", regex=False)
+        if "Espansione" in out.columns and "ID Carta" in out.columns:
+            missing = out["Espansione"].isna() | out["Espansione"].astype(str).str.strip().eq("")
+            out.loc[missing, "Espansione"] = out.loc[missing, "ID Carta"].apply(_guess_expansion_from_card_id)
+        if "Numero" in out.columns and "ID Carta" in out.columns:
+            missing = out["Numero"].isna() | out["Numero"].astype(str).str.strip().eq("")
+            out.loc[missing, "Numero"] = out.loc[missing, "ID Carta"].apply(_guess_number_from_card_id)
+        return out
 
-        with add_tab:
-            with st.form("add_card_form", clear_on_submit=True):
-                c1, c2, c3, c4 = st.columns(4)
-                new_id = c1.text_input("ID Carta", placeholder="OP16-042")
-                new_name = c2.text_input("Nome", placeholder="Prisoner of Impel Down")
-                new_lang = c3.selectbox("Lingua", ["EN", "JP", ""], index=0)
-                new_variant = c4.text_input("Variante", value="Base")
+    # -------------------------------------------------------------------------
+    # Ricerca principale + ricerca avanzata
+    # -------------------------------------------------------------------------
+    filtered = collection.copy()
+    st.subheader("Ricerca")
+    main_filter_cols = st.columns([2.2, 1, 1, 1])
+    with main_filter_cols[0]:
+        search = st.text_input("Cerca", placeholder="Nome, ID carta, variante...", key="cards_search_main")
+    with main_filter_cols[1]:
+        if "Lingua" in filtered.columns:
+            langs = sorted([x for x in filtered["Lingua"].dropna().astype(str).unique() if x.strip()])
+            selected_langs = st.multiselect("Lingua", langs, default=[], key="cards_filter_lang")
+        else:
+            selected_langs = []
+    with main_filter_cols[2]:
+        if "Espansione" in filtered.columns:
+            exps = sorted([x for x in filtered["Espansione"].dropna().astype(str).unique() if x.strip()])
+            selected_exps = st.multiselect("Espansione", exps, default=[], key="cards_filter_exp")
+        else:
+            selected_exps = []
+    with main_filter_cols[3]:
+        owned_only = st.checkbox("Solo possedute", value=False, key="cards_filter_owned")
 
-                c5, c6, c7, c8 = st.columns(4)
-                new_exp = c5.text_input("Espansione", value=_guess_expansion_from_card_id(new_id))
-                new_num = c6.text_input("Numero", value=_guess_number_from_card_id(new_id))
-                new_rarity = c7.text_input("Rarità", placeholder="C, UC, R, SR, SEC, TR...")
-                new_type = c8.text_input("Tipo carta", placeholder="CHARACTER, EVENT, LEADER...")
+    if search:
+        s = search.lower().strip()
+        mask = pd.Series(False, index=filtered.index)
+        for col in ["ID Carta", "Nome", "Variante", "Espansione", "Numero", "Rarità"]:
+            if col in filtered.columns:
+                mask = mask | filtered[col].astype(str).str.lower().str.contains(s, na=False)
+        filtered = filtered[mask]
 
-                c9, c10, c11, c12 = st.columns(4)
-                new_color = c9.text_input("Color", placeholder="Blue, Red, Yellow...")
-                new_qty = c10.number_input("Quantità", min_value=0, step=1, value=1)
-                new_value = c11.number_input("Valore (€)", min_value=0.0, step=0.01, value=0.0, format="%.2f")
-                new_source = c12.text_input("Fonte prezzo", value="Manuale")
+    if selected_langs and "Lingua" in filtered.columns:
+        filtered = filtered[filtered["Lingua"].isin(selected_langs)]
+    if selected_exps and "Espansione" in filtered.columns:
+        filtered = filtered[filtered["Espansione"].isin(selected_exps)]
+    if owned_only and "Quantità" in filtered.columns:
+        filtered = filtered[pd.to_numeric(filtered["Quantità"], errors="coerce").fillna(0) > 0]
 
-                submitted_add = st.form_submit_button("Aggiungi carta", type="primary", use_container_width=True)
-
-            if submitted_add:
-                try:
-                    if not str(new_id).strip() and not str(new_name).strip():
-                        st.error("Inserisci almeno ID Carta o Nome.")
-                    else:
-                        updated = collection.copy()
-                        required_cols = [
-                            "ID Carta", "Espansione", "Numero", "Nome", "Lingua", "Variante", "Rarità", "Tipo carta", "Color",
-                            "Quantità", "Valore", "Valore totale", "Fonte prezzo"
-                        ]
-                        for col in required_cols:
-                            if col not in updated.columns:
-                                updated[col] = "" if col not in {"Quantità", "Valore", "Valore totale"} else 0
-
-                        card_id = str(new_id).strip().upper().replace(".", "-").replace("_", "-")
-                        row = {col: "" for col in updated.columns}
-                        row.update({
-                            "ID Carta": card_id,
-                            "Espansione": str(new_exp).strip() or _guess_expansion_from_card_id(card_id),
-                            "Numero": str(new_num).strip() or _guess_number_from_card_id(card_id),
-                            "Nome": str(new_name).strip(),
-                            "Lingua": str(new_lang).strip(),
-                            "Variante": str(new_variant).strip(),
-                            "Rarità": str(new_rarity).strip(),
-                            "Tipo carta": str(new_type).strip(),
-                            "Color": str(new_color).strip(),
-                            "Quantità": int(new_qty),
-                            "Valore": float(new_value),
-                            "Valore totale": int(new_qty) * float(new_value),
-                            "Fonte prezzo": str(new_source).strip() or "Manuale",
-                        })
-                        updated = pd.concat([updated, pd.DataFrame([row])], ignore_index=True)
-                        save_collection_from_streamlit(updated, source="streamlit_add_card")
-                        st.success(f"Carta aggiunta: {row.get('ID Carta', '')} {row.get('Nome', '')}".strip())
-                        st.cache_data.clear()
-                        time.sleep(0.5)
-                        st.rerun()
-                except Exception as exc:
-                    st.error(f"Errore durante l'aggiunta carta: {exc}")
-
-        with del_tab:
-            if collection.empty:
-                st.caption("Nessuna carta da eliminare.")
+    with st.expander("Ricerca avanzata", expanded=False):
+        adv_cols = st.columns(4)
+        with adv_cols[0]:
+            if "Rarità" in filtered.columns:
+                rarities = sorted([x for x in collection["Rarità"].dropna().astype(str).unique() if x.strip()])
+                selected_rarities = st.multiselect("Rarità", rarities, default=[], key="cards_filter_rarity")
             else:
-                delete_options = [(int(idx), _card_label(idx, row)) for idx, row in collection.iterrows()]
-                selected_delete = st.selectbox(
-                    "Carta da eliminare",
-                    options=delete_options,
-                    format_func=lambda item: item[1],
-                    index=0,
-                    help="L'eliminazione rimuove la carta dal JSON e dall'Excel finale dopo backup automatico.",
-                )
-                confirm_delete = st.checkbox("Confermo di voler eliminare questa carta", value=False)
-                if st.button("Elimina carta selezionata", type="secondary", use_container_width=True, disabled=not confirm_delete):
-                    try:
-                        row_id = int(selected_delete[0])
-                        deleted_label = selected_delete[1]
-                        updated = collection.drop(index=row_id).reset_index(drop=True)
-                        save_collection_from_streamlit(updated, source="streamlit_delete_card")
-                        st.success(f"Carta eliminata: {deleted_label}")
-                        st.cache_data.clear()
-                        time.sleep(0.5)
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Errore durante l'eliminazione carta: {exc}")
+                selected_rarities = []
+            if "Tipo carta" in filtered.columns:
+                types = sorted([x for x in collection["Tipo carta"].dropna().astype(str).unique() if x.strip()])
+                selected_types = st.multiselect("Tipo carta", types, default=[], key="cards_filter_type")
+            else:
+                selected_types = []
+        with adv_cols[1]:
+            if "Color" in filtered.columns:
+                colors = sorted([x for x in collection["Color"].dropna().astype(str).unique() if x.strip()])
+                selected_colors = st.multiselect("Color", colors, default=[], key="cards_filter_color")
+            else:
+                selected_colors = []
+            if "Variante" in filtered.columns:
+                variants = sorted([x for x in collection["Variante"].dropna().astype(str).unique() if x.strip()])
+                selected_variants = st.multiselect("Variante", variants, default=[], key="cards_filter_variant")
+            else:
+                selected_variants = []
+        with adv_cols[2]:
+            min_value = st.number_input("Valore minimo (€)", min_value=0.0, value=0.0, step=0.5, format="%.2f", key="cards_filter_min_value")
+            min_qty = st.number_input("Quantità minima", min_value=0, value=0, step=1, key="cards_filter_min_qty")
+        with adv_cols[3]:
+            if "Trend prezzo" in filtered.columns:
+                trends = sorted([x for x in collection["Trend prezzo"].dropna().astype(str).unique() if x.strip()])
+                selected_trends = st.multiselect("Trend prezzo", trends, default=[], key="cards_filter_trend")
+            else:
+                selected_trends = []
+            max_rows = st.number_input("Limite carte visualizzate", min_value=10, max_value=10000, value=1000, step=100, key="cards_filter_limit")
 
-    with manage_tab_edit:
-        editor_df = filtered[show_cols].copy()
-        editor_df.insert(0, "_row_id", filtered.index.astype(int))
+    if selected_rarities and "Rarità" in filtered.columns:
+        filtered = filtered[filtered["Rarità"].isin(selected_rarities)]
+    if selected_types and "Tipo carta" in filtered.columns:
+        filtered = filtered[filtered["Tipo carta"].isin(selected_types)]
+    if selected_colors and "Color" in filtered.columns:
+        filtered = filtered[filtered["Color"].isin(selected_colors)]
+    if selected_variants and "Variante" in filtered.columns:
+        filtered = filtered[filtered["Variante"].isin(selected_variants)]
+    if selected_trends and "Trend prezzo" in filtered.columns:
+        filtered = filtered[filtered["Trend prezzo"].isin(selected_trends)]
+    if "Valore" in filtered.columns and min_value > 0:
+        filtered = filtered[pd.to_numeric(filtered["Valore"], errors="coerce").fillna(0) >= float(min_value)]
+    if "Quantità" in filtered.columns and min_qty > 0:
+        filtered = filtered[pd.to_numeric(filtered["Quantità"], errors="coerce").fillna(0) >= int(min_qty)]
 
-        column_config = {
-            "_row_id": None,
-            "Quantità": st.column_config.NumberColumn("Quantità", min_value=0, step=1, format="%d", help="Quante copie possiedi."),
-            "Valore": money_column("Valore (€)"),
-            "Valore totale": money_column("Valore totale (€)"),
-            "Valore precedente": money_column("Valore precedente (€)"),
-            "Variazione valore": money_column("Variazione valore (€)"),
-            "Variazione %": st.column_config.NumberColumn("Variazione %", format="%.2f%%"),
-        }
+    st.caption(f"Carte trovate: {len(filtered)} su {len(collection)}")
 
-        edited_df = st.data_editor(
-            editor_df,
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-            disabled=["_row_id"],
-            column_config=column_config,
-            key="cards_full_editor",
+    # -------------------------------------------------------------------------
+    # Scelta colonne e ordine
+    # -------------------------------------------------------------------------
+    preferred_cols = [
+        "ID Carta", "Espansione", "Numero", "Nome", "Lingua", "Variante", "Rarità", "Tipo carta", "Color", "Quantità",
+        "Valore", "Valore totale", "Valore precedente", "Variazione valore", "Variazione %", "Trend prezzo",
+        "Rarità JP ufficiale", "Rarità JP candidate", "Fonte rarità JP", PRICE_SOURCE_COLUMN,
+    ]
+    available_cols = [c for c in preferred_cols if c in collection.columns] + [c for c in collection.columns if c not in preferred_cols]
+    default_cols = [c for c in preferred_cols if c in collection.columns]
+
+    # Streamlit non permette di modificare session_state di un widget dopo che è stato creato.
+    # I pulsanti preset impostano quindi una selezione pendente, applicata prima del multiselect.
+    if "cards_cols_pending_preset" in st.session_state:
+        st.session_state["cards_visible_cols"] = st.session_state.pop("cards_cols_pending_preset")
+    if "cards_visible_cols" not in st.session_state:
+        st.session_state["cards_visible_cols"] = default_cols
+
+    with st.expander("Colonne visibili e ordine", expanded=False):
+        preset_cols = st.columns(4)
+        if preset_cols[0].button("Preset base", use_container_width=True):
+            st.session_state["cards_cols_pending_preset"] = [c for c in ["ID Carta", "Nome", "Lingua", "Variante", "Rarità", "Quantità", "Valore", "Valore totale"] if c in collection.columns]
+            st.rerun()
+        if preset_cols[1].button("Preset prezzi", use_container_width=True):
+            st.session_state["cards_cols_pending_preset"] = [c for c in ["ID Carta", "Nome", "Quantità", "Valore", "Valore totale", "Valore precedente", "Variazione valore", "Variazione %", "Trend prezzo"] if c in collection.columns]
+            st.rerun()
+        if preset_cols[2].button("Preset completo", use_container_width=True):
+            st.session_state["cards_cols_pending_preset"] = available_cols
+            st.rerun()
+        if preset_cols[3].button("Reset ordine", use_container_width=True):
+            st.session_state["cards_cols_pending_preset"] = default_cols
+            st.rerun()
+
+        selected_cols = st.multiselect(
+            "Scegli colonne e ordine di visualizzazione",
+            options=available_cols,
+            default=st.session_state.get("cards_visible_cols", default_cols),
+            key="cards_visible_cols",
+            help="L'ordine selezionato qui sarà l'ordine della tabella modificabile.",
         )
 
-        save_col, hint_col = st.columns([1, 3])
-        with save_col:
-            save_pressed = st.button("Salva modifiche", type="primary", use_container_width=True)
-        with hint_col:
-            st.caption("Il salvataggio aggiorna out/one_piece_collection.json e out/one_piece_collection.xlsx, con backup automatico prima della modifica. Valore totale viene ricalcolato da Quantità × Valore.")
+    show_cols = selected_cols or default_cols
 
-        if save_pressed:
-            try:
-                updated = collection.copy()
-                changes = 0
-                numeric_cols = {"Quantità", "Valore", "Valore totale", "Valore precedente", "Variazione valore", "Variazione %", "CM_Low", "CM_Trend", "CM_Avg", "CM_Avg1", "CM_Avg7", "CM_Avg30", "Power", "Counter", "Cost", "Life"}
-                for _, row in edited_df.iterrows():
-                    row_id = int(row["_row_id"])
-                    for col in show_cols:
-                        if col not in updated.columns or col == "_row_id":
-                            continue
-                        new_value = row.get(col, "")
-                        old_value = updated.at[row_id, col]
-                        if col in numeric_cols:
-                            new_num = pd.to_numeric(new_value, errors="coerce")
-                            old_num = pd.to_numeric(old_value, errors="coerce")
-                            if pd.isna(new_num):
-                                new_value = 0
-                            else:
-                                new_value = int(new_num) if col == "Quantità" else float(new_num)
-                            old_cmp = 0 if pd.isna(old_num) else (int(old_num) if col == "Quantità" else float(old_num))
-                            changed = new_value != old_cmp
-                        else:
-                            new_value = "" if pd.isna(new_value) else str(new_value)
-                            old_cmp = "" if pd.isna(old_value) else str(old_value)
-                            changed = new_value != old_cmp
-                        if changed:
-                            updated.at[row_id, col] = new_value
-                            changes += 1
+    # -------------------------------------------------------------------------
+    # Azioni rapide: aggiunta riga e rimozione duplicati
+    # -------------------------------------------------------------------------
+    st.subheader("Tabella carte")
 
-                if "Quantità" in updated.columns and "Valore" in updated.columns:
-                    updated["Quantità"] = pd.to_numeric(updated["Quantità"], errors="coerce").fillna(0).clip(lower=0).round(0).astype(int)
-                    updated["Valore"] = pd.to_numeric(updated["Valore"], errors="coerce").fillna(0)
-                    updated["Valore totale"] = updated["Quantità"] * updated["Valore"]
-                save_collection_from_streamlit(updated)
-                st.success(f"Modifiche salvate. Campi modificati: {changes}. Excel e JSON aggiornati.")
+    action_cols = st.columns([1.1, 1.2, 1.4, 2.8])
+    if "new_rows_to_show" not in st.session_state:
+        st.session_state["new_rows_to_show"] = 0
+
+    with action_cols[0]:
+        if st.button("➕ Aggiungi riga", use_container_width=True):
+            st.session_state["new_rows_to_show"] += 1
+            st.rerun()
+    with action_cols[1]:
+        if st.button("🧹 Elimina doppioni identici", use_container_width=True):
+            before = len(collection)
+            deduped = collection.drop_duplicates(keep="first").reset_index(drop=True)
+            removed = before - len(deduped)
+            if removed > 0:
+                with st.status("Rimozione doppioni e salvataggio in corso...", expanded=True) as status:
+                    st.write(f"Doppioni identici trovati: {removed}")
+                    save_collection_from_streamlit(deduped, source="streamlit_remove_exact_duplicates")
+                    status.update(label=f"Doppioni rimossi: {removed}", state="complete")
                 st.cache_data.clear()
                 time.sleep(0.5)
                 st.rerun()
-            except Exception as exc:
-                st.error(f"Errore durante il salvataggio modifiche: {exc}")
+            else:
+                st.info("Nessun doppione identico trovato.")
+    with action_cols[2]:
+        if st.button("Annulla nuove righe non salvate", use_container_width=True, disabled=st.session_state.get("new_rows_to_show", 0) == 0):
+            st.session_state["new_rows_to_show"] = 0
+            st.rerun()
+    with action_cols[3]:
+        st.empty()
+
+    # -------------------------------------------------------------------------
+    # Data editor con eliminazione tramite selezione riga e nuove righe compilabili
+    # -------------------------------------------------------------------------
+    filtered_limited = filtered.head(int(max_rows)).copy() if "max_rows" in locals() else filtered.copy()
+    editor_df = filtered_limited[show_cols].copy() if show_cols else filtered_limited.copy()
+
+    # Forza tipi editabili nella tabella: Streamlit può bloccare colonne con tipi misti.
+    numeric_cols = {"Quantità", "Valore", "Valore totale", "Valore precedente", "Variazione valore", "Variazione %", "CM_Low", "CM_Trend", "CM_Avg", "CM_Avg1", "CM_Avg7", "CM_Avg30", "Power", "Counter", "Cost", "Life", "Cardmarket Prodotti per carta"}
+    for _col in list(editor_df.columns):
+        if _col in numeric_cols:
+            editor_df[_col] = pd.to_numeric(editor_df[_col], errors="coerce").fillna(0)
+        else:
+            editor_df[_col] = editor_df[_col].fillna("").astype(str)
+
+    editor_df.insert(0, "_new_row", False)
+    editor_df.insert(0, "_row_id", filtered_limited.index.astype(int))
+
+    # Aggiunge righe vuote compilabili direttamente nella tabella.
+    new_rows = int(st.session_state.get("new_rows_to_show", 0) or 0)
+    if new_rows > 0:
+        blank_rows = []
+        base_cols = list(editor_df.columns)
+        for i in range(new_rows):
+            row = {c: "" for c in base_cols}
+            row["_row_id"] = -1 - i
+            row["_new_row"] = True
+            if "Lingua" in row:
+                row["Lingua"] = "EN"
+            if "Variante" in row:
+                row["Variante"] = "Base"
+            if "Quantità" in row:
+                row["Quantità"] = 0
+            if "Valore" in row:
+                row["Valore"] = 0.0
+            if "Valore totale" in row:
+                row["Valore totale"] = 0.0
+            if PRICE_SOURCE_COLUMN in row:
+                row[PRICE_SOURCE_COLUMN] = "Manuale"
+            blank_rows.append(row)
+        editor_df = pd.concat([editor_df, pd.DataFrame(blank_rows)], ignore_index=True)
+
+    column_config = {
+        "_row_id": None,
+        "_new_row": None,
+    }
+    for _col in show_cols:
+        if _col == "Quantità":
+            column_config[_col] = st.column_config.NumberColumn("Quantità", min_value=0, step=1, format="%d", help="Quante copie possiedi.")
+        elif _col in {"Valore", "Valore totale", "Valore precedente", "Variazione valore", "CM_Low", "CM_Trend", "CM_Avg", "CM_Avg1", "CM_Avg7", "CM_Avg30"}:
+            label = f"{_col} (€)" if not _col.startswith("CM_") else _col
+            column_config[_col] = money_column(label) if not _col.startswith("CM_") else st.column_config.NumberColumn(_col, format="%.2f")
+        elif _col == "Variazione %":
+            column_config[_col] = st.column_config.NumberColumn("Variazione %", format="%.2f%%")
+        elif _col in {"Power", "Counter", "Cost", "Life", "Cardmarket Prodotti per carta"}:
+            column_config[_col] = st.column_config.NumberColumn(_col, step=1, format="%d")
+        else:
+            column_config[_col] = st.column_config.TextColumn(_col)
+
+    edited_df = st.data_editor(
+        editor_df,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        disabled=["_row_id", "_new_row"],
+        column_config=column_config,
+        key="cards_full_editor_v2",
+        height=620,
+    )
+
+    # Elimina carte tramite selezione riga su una tabella compatta separata.
+    selected_delete_ids = []
+    with st.expander("Elimina carte", expanded=False):
+        delete_cols = [c for c in ["ID Carta", "Nome", "Lingua", "Rarità", "Variante", "Espansione", "Numero", "Quantità", "Valore"] if c in filtered_limited.columns]
+        delete_map = filtered_limited[delete_cols].copy() if delete_cols else filtered_limited.copy()
+        delete_map.insert(0, "_row_id", filtered_limited.index.astype(int))
+        try:
+            delete_event = st.dataframe(
+                delete_map.drop(columns=["_row_id"]),
+                use_container_width=True,
+                hide_index=True,
+                height=280,
+                selection_mode="multi-row",
+                on_select="rerun",
+                key="cards_delete_selection_table",
+            )
+            selected_positions = list(getattr(delete_event, "selection", {}).get("rows", [])) if delete_event is not None else []
+        except TypeError:
+            labels = []
+            label_to_id = {}
+            for pos, (_, r) in enumerate(delete_map.iterrows()):
+                label = " | ".join(str(r.get(c, "")) for c in delete_cols[:5])
+                label = f"{pos + 1}. {label}"
+                labels.append(label)
+                label_to_id[label] = int(r["_row_id"])
+            chosen = st.multiselect("Seleziona carte da eliminare", labels, key="cards_delete_selection_fallback")
+            selected_positions = []
+            selected_delete_ids = [label_to_id[x] for x in chosen]
+
+        if not selected_delete_ids and selected_positions:
+            for pos in selected_positions:
+                if 0 <= int(pos) < len(delete_map):
+                    selected_delete_ids.append(int(delete_map.iloc[int(pos)]["_row_id"]))
+
+        if selected_delete_ids:
+            st.warning(f"Carte selezionate per eliminazione: {len(selected_delete_ids)}")
+
+    # Calcola modifiche non salvate, nuove righe e selezioni da eliminare.
+    changes = 0
+    new_rows_to_save = []
+
+    for _, row in edited_df.iterrows():
+        row_id = int(row.get("_row_id", -999999))
+        is_new = bool(row.get("_new_row", False)) or row_id < 0
+
+        row_payload = {c: row.get(c, "") for c in show_cols if c in edited_df.columns}
+        if is_new:
+            if not _is_effectively_empty_row(row_payload):
+                new_rows_to_save.append(row_payload)
+            continue
+
+        if row_id not in collection.index:
+            continue
+        for col in show_cols:
+            if col not in collection.columns or col not in edited_df.columns:
+                continue
+            new_value = row.get(col, "")
+            old_value = collection.at[row_id, col]
+            if col in numeric_cols:
+                new_num = pd.to_numeric(new_value, errors="coerce")
+                old_num = pd.to_numeric(old_value, errors="coerce")
+                new_cmp = 0 if pd.isna(new_num) else (int(new_num) if col == "Quantità" else float(new_num))
+                old_cmp = 0 if pd.isna(old_num) else (int(old_num) if col == "Quantità" else float(old_num))
+                if new_cmp != old_cmp:
+                    changes += 1
+            else:
+                new_cmp = "" if pd.isna(new_value) else str(new_value)
+                old_cmp = "" if pd.isna(old_value) else str(old_value)
+                if new_cmp != old_cmp:
+                    changes += 1
+
+    has_pending = changes > 0 or bool(new_rows_to_save) or bool(selected_delete_ids)
+    if has_pending:
+        st.markdown(
+            f'<div class="op-warning">⚠️ Modifiche non salvate: {changes} campi modificati, {len(new_rows_to_save)} nuove carte compilate, {len(selected_delete_ids)} carte selezionate per eliminazione.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown('<div class="op-ok">Nessuna modifica da salvare.</div>', unsafe_allow_html=True)
+
+    save_col, delete_col, hint_col = st.columns([1.2, 1.4, 3])
+    with save_col:
+        save_pressed = st.button("💾 Salva modifiche", type="primary", use_container_width=True, disabled=not has_pending)
+    with delete_col:
+        delete_pressed = st.button("🗑️ Elimina carte selezionate", use_container_width=True, disabled=len(selected_delete_ids) == 0)
+    with hint_col:
+        st.caption("Il salvataggio aggiorna JSON ed Excel, con backup automatico.")
+
+    def _apply_editor_changes(save_deletions=True, save_field_changes=True, save_new_rows=True):
+        updated = collection.copy()
+        local_changes = 0
+
+        if save_deletions and selected_delete_ids:
+            updated = updated.drop(index=selected_delete_ids, errors="ignore")
+            local_changes += len(selected_delete_ids)
+
+        if save_field_changes:
+            for _, row in edited_df.iterrows():
+                row_id = int(row.get("_row_id", -999999))
+                is_new = bool(row.get("_new_row", False)) or row_id < 0
+                if is_new or row_id not in updated.index:
+                    continue
+                for col in show_cols:
+                    if col not in updated.columns or col not in edited_df.columns:
+                        continue
+                    new_value = row.get(col, "")
+                    old_value = updated.at[row_id, col]
+                    if col in numeric_cols:
+                        new_num = pd.to_numeric(new_value, errors="coerce")
+                        new_value = 0 if pd.isna(new_num) else (int(new_num) if col == "Quantità" else float(new_num))
+                        old_num = pd.to_numeric(old_value, errors="coerce")
+                        old_cmp = 0 if pd.isna(old_num) else (int(old_num) if col == "Quantità" else float(old_num))
+                        changed = new_value != old_cmp
+                    else:
+                        new_value = "" if pd.isna(new_value) else str(new_value)
+                        old_cmp = "" if pd.isna(old_value) else str(old_value)
+                        changed = new_value != old_cmp
+                    if changed:
+                        updated.at[row_id, col] = new_value
+                        local_changes += 1
+
+        if save_new_rows and new_rows_to_save:
+            for payload in new_rows_to_save:
+                for col in payload.keys():
+                    if col not in updated.columns:
+                        updated[col] = 0 if col in numeric_cols else ""
+                row = {col: "" for col in updated.columns}
+                for col, value in payload.items():
+                    if col in row:
+                        row[col] = value
+                if "ID Carta" in row:
+                    row["ID Carta"] = str(row.get("ID Carta", "")).strip().upper().replace(".", "-").replace("_", "-")
+                if "Espansione" in row and not str(row.get("Espansione", "")).strip():
+                    row["Espansione"] = _guess_expansion_from_card_id(row.get("ID Carta", ""))
+                if "Numero" in row and not str(row.get("Numero", "")).strip():
+                    row["Numero"] = _guess_number_from_card_id(row.get("ID Carta", ""))
+                if PRICE_SOURCE_COLUMN in row and not str(row.get(PRICE_SOURCE_COLUMN, "")).strip():
+                    row[PRICE_SOURCE_COLUMN] = "Manuale"
+                updated = pd.concat([updated, pd.DataFrame([row])], ignore_index=True)
+                local_changes += 1
+
+        updated = _normalise_card_id_fields(updated).reset_index(drop=True)
+        if "Quantità" in updated.columns:
+            updated["Quantità"] = pd.to_numeric(updated["Quantità"], errors="coerce").fillna(0).clip(lower=0).round(0).astype(int)
+        if "Valore" in updated.columns:
+            updated["Valore"] = pd.to_numeric(updated["Valore"], errors="coerce").fillna(0)
+        if "Valore totale" not in updated.columns and "Quantità" in updated.columns and "Valore" in updated.columns:
+            updated["Valore totale"] = updated["Quantità"] * updated["Valore"]
+        return updated, local_changes
+
+    if delete_pressed:
+        try:
+            with st.status("Eliminazione e salvataggio in corso...", expanded=True) as status:
+                st.write(f"Carte selezionate da eliminare: {len(selected_delete_ids)}")
+                updated, local_changes = _apply_editor_changes(save_deletions=True, save_field_changes=False, save_new_rows=False)
+                save_collection_from_streamlit(updated, source="streamlit_delete_selected_rows")
+                status.update(label="Eliminazione completata", state="complete")
+            st.success(f"Carte eliminate: {len(selected_delete_ids)}")
+            st.cache_data.clear()
+            time.sleep(0.5)
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Errore durante l'eliminazione: {exc}")
+
+    if save_pressed:
+        try:
+            with st.status("Salvataggio modifiche in corso...", expanded=True) as status:
+                st.write("Creo backup automatico dei file finali.")
+                st.write("Aggiorno JSON finale.")
+                st.write("Rigenero Excel con Dashboard.")
+                updated, local_changes = _apply_editor_changes(save_deletions=True, save_field_changes=True, save_new_rows=True)
+                save_collection_from_streamlit(updated, source="streamlit_table_edit")
+                status.update(label="Salvataggio completato", state="complete")
+            st.session_state["new_rows_to_show"] = 0
+            st.success(f"Modifiche salvate. Operazioni applicate: {local_changes}. Excel e JSON aggiornati.")
+            st.cache_data.clear()
+            time.sleep(0.5)
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Errore durante il salvataggio modifiche: {exc}")
 
 with tab_ai:
     st.header("Domande sul database")
@@ -904,7 +1309,7 @@ with tab_ai:
         height=90,
     )
 
-    if st.button("Cerca", type="primary", use_container_width=True):
+    if st.button("Rispondi dal database", type="primary", use_container_width=True):
         if not question.strip():
             st.warning("Scrivi una domanda prima di inviare.")
         else:

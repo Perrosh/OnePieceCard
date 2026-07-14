@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -26,6 +27,11 @@ from one_piece_common import (
     TOP_5_CALI_CSV,
     VALUE_HISTORY_CSV,
     append_value_history,
+    find_json,
+    PRICE_GUIDE_PATTERN,
+    PRODUCTS_SINGLES_PATTERN,
+    normalize_code,
+    normalize_idproduct_for_price_key,
 )
 
 
@@ -141,7 +147,6 @@ if "dashboard_theme" not in st.session_state:
 _header_left, _header_right = st.columns([6, 1.45], vertical_alignment="center")
 with _header_left:
     st.title("🏴‍☠️ One Piece Card Collection")
-    st.caption("Dashboard locale per Excel, JSON, valori Cardmarket, trend prezzo, modifiche manuali e log di aggiornamento.")
 with _header_right:
     selected_theme = st.selectbox(
         "Tema",
@@ -160,7 +165,10 @@ st.markdown(
         color: {pal['text']};
     }}
     section[data-testid="stSidebar"] {{
-        background: {pal['sidebar']};
+        display: none !important;
+    }}
+    div[data-testid="collapsedControl"] {{
+        display: none !important;
     }}
     .block-container {{
         padding-top: 1.3rem;
@@ -220,6 +228,30 @@ st.markdown(
         padding: 12px 14px;
         margin: 8px 0 12px 0;
     }}
+    div[data-testid="stVerticalBlock"]:has(.op-toolbar-marker) {{
+        position: sticky;
+        top: 0;
+        z-index: 999;
+        background: {pal['card']};
+        border: 1px solid {pal['border']};
+        border-radius: 0 0 18px 18px;
+        padding: 10px 12px 12px 12px;
+        margin-bottom: 12px;
+        backdrop-filter: blur(14px);
+        box-shadow: 0 12px 28px rgba(0,0,0,0.26);
+    }}
+    .op-toolbar-marker {{
+        height: 0;
+        margin: 0;
+        padding: 0;
+    }}
+    .op-run-summary {{
+        background: {pal['ok_bg']};
+        border: 1px solid rgba(34, 197, 94, 0.36);
+        border-radius: 14px;
+        padding: 12px 14px;
+        margin: 8px 0 12px 0;
+    }}
     button[kind="primary"] {{
         border: 1px solid {pal['accent']};
     }}
@@ -265,6 +297,172 @@ def normalize_numeric(df, cols):
         out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0)
     return out
 
+
+
+
+def _extract_card_id_from_cardmarket_name(name):
+    """Estrae OPxx-xxx/STxx-xxx/EBxx-xxx/PRBxx-xxx/P-xxx dal nome prodotto Cardmarket."""
+    if not isinstance(name, str):
+        return ""
+    matches = re.findall(r"\(([A-Z]{1,5}-?\d{2}-\d{3}|P-?\d{3})\)", name)
+    return normalize_code(matches[-1]) if matches else ""
+
+
+def _clean_cardmarket_name(name):
+    if not isinstance(name, str):
+        return ""
+    return re.sub(r"\s*\(([A-Z]{1,5}-?\d{2}-\d{3}|P-?\d{3})\)\s*$", "", name).strip()
+
+
+def _load_json_file(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def debug_cardmarket_update_for_idproduct(idproduct, collection_df):
+    """Simula in modo leggibile la logica di Aggiorna valori per un idProduct.
+
+    Non modifica nulla: legge i JSON correnti, cerca il prodotto, cerca il prezzo,
+    trova eventuali righe nel database e mostra quali soli campi di mercato verrebbero aggiornati.
+    """
+    result = {
+        "ok": False,
+        "messages": [],
+        "files": {},
+        "product": {},
+        "price": {},
+        "derived": {},
+        "rows_by_idproduct": pd.DataFrame(),
+        "rows_by_card_id": pd.DataFrame(),
+        "updates_preview": pd.DataFrame(),
+    }
+
+    normalized = normalize_idproduct_for_price_key(idproduct)
+    result["derived"]["Cardmarket idProduct richiesto"] = str(idproduct).strip()
+    result["derived"]["Cardmarket idProduct normalizzato"] = normalized
+
+    if not normalized:
+        result["messages"].append("Inserisci un Cardmarket idProduct valido.")
+        return result
+
+    try:
+        products_file = find_json(PRODUCTS_SINGLES_PATTERN)
+        price_file = find_json(PRICE_GUIDE_PATTERN)
+        result["files"] = {
+            "Products singles JSON": products_file,
+            "Price guide JSON": price_file,
+        }
+    except Exception as e:
+        result["messages"].append(f"JSON Cardmarket mancanti o non leggibili: {e}")
+        return result
+
+    try:
+        products_data = _load_json_file(products_file)
+        price_data = _load_json_file(price_file)
+    except Exception as e:
+        result["messages"].append(f"Errore lettura JSON: {e}")
+        return result
+
+    products = products_data.get("products", []) if isinstance(products_data, dict) else []
+    price_guides = price_data.get("priceGuides", []) if isinstance(price_data, dict) else []
+
+    product = None
+    for item in products:
+        if normalize_idproduct_for_price_key(item.get("idProduct", "")) == normalized:
+            product = item
+            break
+
+    price = None
+    for item in price_guides:
+        if normalize_idproduct_for_price_key(item.get("idProduct", "")) == normalized:
+            price = item
+            break
+
+    if not product:
+        result["messages"].append("Prodotto non trovato in products_singles JSON.")
+    if not price:
+        result["messages"].append("Prezzo non trovato in price_guide JSON.")
+
+    if product:
+        product_name = product.get("name", "")
+        card_id = _extract_card_id_from_cardmarket_name(product_name)
+        clean_name = _clean_cardmarket_name(product_name)
+        result["product"] = {k: product.get(k, "") for k in [
+            "idProduct", "name", "categoryName", "idCategory", "idExpansion", "idMetacard", "dateAdded"
+        ]}
+        result["derived"].update({
+            "ID Carta ricavato dal nome Cardmarket": card_id,
+            "Nome pulito ricavato": clean_name,
+            "Colonna prezzo usata dal programma": PRICE_SOURCE_COLUMN,
+        })
+    else:
+        card_id = ""
+        clean_name = ""
+
+    if price:
+        result["price"] = {k: price.get(k, "") for k in [
+            "idProduct", "low", "trend", "avg", "avg1", "avg7", "avg30", "sell", "createdAt"
+        ] if k in price}
+        # Alcuni JSON hanno createdAt solo a livello root.
+        if "createdAt" not in result["price"] and isinstance(price_data, dict):
+            result["price"]["priceGuide createdAt"] = price_data.get("createdAt", "")
+
+    df = collection_df.copy()
+    if df.empty:
+        result["messages"].append("Database collezione vuoto o non caricato.")
+    else:
+        if "Cardmarket idProduct" not in df.columns:
+            df["Cardmarket idProduct"] = ""
+        if "ID Carta" not in df.columns:
+            df["ID Carta"] = ""
+
+        idp_series = df["Cardmarket idProduct"].apply(normalize_idproduct_for_price_key)
+        rows_by_idp = df[idp_series == normalized].copy()
+        result["rows_by_idproduct"] = rows_by_idp
+
+        if card_id:
+            card_id_series = df["ID Carta"].astype(str).apply(lambda x: normalize_code(x.strip()))
+            result["rows_by_card_id"] = df[card_id_series == card_id].copy()
+
+        market_update = {}
+        if price:
+            def num(key):
+                return pd.to_numeric(price.get(key, 0), errors="coerce")
+            market_update = {
+                "Valore": float(num(PRICE_SOURCE_COLUMN)) if not pd.isna(num(PRICE_SOURCE_COLUMN)) else 0.0,
+                "CM_Low": float(num("low")) if not pd.isna(num("low")) else 0.0,
+                "CM_Trend": float(num("trend")) if not pd.isna(num("trend")) else 0.0,
+                "CM_Avg": float(num("avg")) if not pd.isna(num("avg")) else 0.0,
+                "CM_Avg1": float(num("avg1")) if not pd.isna(num("avg1")) else 0.0,
+                "CM_Avg7": float(num("avg7")) if not pd.isna(num("avg7")) else 0.0,
+                "CM_Avg30": float(num("avg30")) if not pd.isna(num("avg30")) else 0.0,
+                "CM_Data_Prezzo": price_data.get("createdAt", "") if isinstance(price_data, dict) else "",
+                "Fonte prezzo": f"Cardmarket idProduct {normalized}",
+            }
+        if product:
+            # Diagnostica solamente. Aggiorna valori NON deve riscrivere questo campo se già presente.
+            market_update["Cardmarket idProduct"] = normalized
+            market_update["Cardmarket Nome"] = clean_name or product.get("name", "")
+
+        preview_rows = []
+        target_rows = result["rows_by_idproduct"]
+        if not target_rows.empty and market_update:
+            for idx, row in target_rows.iterrows():
+                for col, new_value in market_update.items():
+                    old_value = row.get(col, "")
+                    preview_rows.append({
+                        "Indice riga": idx,
+                        "Campo": col,
+                        "Valore attuale": old_value,
+                        "Valore da JSON Cardmarket": new_value,
+                        "Viene aggiornato?": "Sì" if col != "Cardmarket idProduct" else "No, resta chiave di partenza",
+                    })
+        result["updates_preview"] = pd.DataFrame(preview_rows)
+
+    if product and price:
+        result["ok"] = True
+        result["messages"].append("Prodotto e prezzi trovati. Aggiorna valori partirebbe da questo idProduct e toccherebbe solo i campi mercato.")
+    return result
 
 def save_collection_from_streamlit(df, source="streamlit_manual_edit"):
     """Salva modifiche manuali da Streamlit su JSON ed Excel finale.
@@ -312,6 +510,50 @@ def money_column(label):
     return st.column_config.NumberColumn(label, format="€ %.2f")
 
 
+def _extract_run_summary(script_name, output, returncode, elapsed):
+    """Crea un riepilogo breve senza mostrare tutto il log nella dashboard."""
+    import re
+
+    label_map = {
+        "one_piece_collection_build.py": "Crea da zero",
+        "one_piece_collection_update_values.py": "Aggiorna valori",
+        "one_piece_collection_sync.py": "Sync espansioni",
+    }
+    title = label_map.get(script_name, script_name)
+    lines = [f"**{title}** completato in **{elapsed}s**." if returncode == 0 else f"**{title}** terminato con errore **{returncode}** dopo **{elapsed}s**."]
+
+    patterns = [
+        (r"JSON Cardmarket validati:\s*(.+)", "JSON Cardmarket"),
+        (r"Set trovati/preparati:\s*(\d+)", "Set preparati"),
+        (r"Carte Bandai raw già presenti:\s*(\d+)", "Carte raw già presenti"),
+        (r"Promo P escluse dal database Bandai:\s*(\d+)", "Promo escluse"),
+        (r"Valori aggiornati:\s*(\d+)", "Valori aggiornati"),
+        (r"Nuove carte aggiunte:\s*(\d+)", "Nuove carte aggiunte"),
+        (r"Doppioni rimossi:\s*(\d+)", "Doppioni rimossi"),
+        (r"Excel finale:\s*(.+)", "Excel finale"),
+        (r"JSON finale:\s*(.+)", "JSON finale"),
+        (r"Log run:\s*(.+)", "Log"),
+    ]
+    found = []
+    for pattern, label in patterns:
+        m = re.search(pattern, output or "")
+        if m:
+            value = m.group(1).strip()
+            if len(value) > 140:
+                value = value[:137] + "..."
+            found.append(f"- {label}: `{value}`")
+
+    if found:
+        lines.append("\n".join(found[:8]))
+    elif returncode == 0:
+        lines.append("Operazione completata. I dettagli restano disponibili nella scheda **File e log**.")
+    else:
+        tail = "\n".join((output or "").splitlines()[-8:])
+        if tail:
+            lines.append("Ultime righe errore:\n```text\n" + tail[-1200:] + "\n```")
+    return "\n\n".join(lines)
+
+
 def run_script(script_name):
     script_path = SRC / script_name
     if not script_path.exists():
@@ -321,65 +563,55 @@ def run_script(script_name):
     st.session_state["last_run_script"] = script_name
     st.session_state["last_run_output"] = ""
     st.session_state["last_run_returncode"] = None
-
-    status = st.status(f"Eseguo {script_name}...", expanded=True)
-    log_box = st.empty()
-    tail_box = st.empty()
+    st.session_state["last_run_summary"] = ""
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
 
     cmd = [sys.executable, "-u", str(script_path)]
-    all_lines = []
-    tail_lines = deque(maxlen=250)
     started_at = time.time()
 
+    label_map = {
+        "one_piece_collection_build.py": "Creo la collezione da zero",
+        "one_piece_collection_update_values.py": "Aggiorno i valori di mercato",
+        "one_piece_collection_sync.py": "Sincronizzo nuove espansioni",
+    }
+    label = label_map.get(script_name, script_name)
+
+    output = ""
+    returncode = -1
     try:
-        process = subprocess.Popen(
-            cmd,
-            cwd=str(ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            env=env,
-        )
-
-        assert process.stdout is not None
-        for line in process.stdout:
-            clean = line.rstrip("\n")
-            all_lines.append(clean)
-            tail_lines.append(clean)
-
-            elapsed = int(time.time() - started_at)
-            tail_box.caption(f"Run attiva da {elapsed}s. Ultime {len(tail_lines)} righe mostrate.")
-            log_box.code("\n".join(tail_lines), language="text")
-
-        returncode = process.wait()
-
+        with st.spinner(f"{label}... Attendi il riepilogo finale."):
+            completed = subprocess.run(
+                cmd,
+                cwd=str(ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+            )
+            output = completed.stdout or ""
+            returncode = completed.returncode
     except Exception as exc:
-        all_lines.append(f"ERRORE AVVIO SCRIPT: {exc}")
+        output = f"ERRORE AVVIO SCRIPT: {exc}"
         returncode = -1
 
-    output = "\n".join(all_lines)
+    elapsed = int(time.time() - started_at)
+    summary = _extract_run_summary(script_name, output, returncode, elapsed)
+
     st.session_state["last_run_output"] = output
     st.session_state["last_run_returncode"] = returncode
-
-    elapsed = int(time.time() - started_at)
-    log_box.code(output[-30000:] if output else "Nessun output prodotto.", language="text")
+    st.session_state["last_run_summary"] = summary
 
     if returncode == 0:
-        status.update(label=f"{script_name} completato in {elapsed}s.", state="complete", expanded=True)
-        st.success(f"{script_name} completato.")
+        st.toast("Operazione completata", icon="✅")
         return True
 
-    status.update(label=f"{script_name} terminato con errore {returncode} dopo {elapsed}s.", state="error", expanded=True)
-    st.error(f"{script_name} terminato con errore {returncode}.")
+    st.toast("Operazione terminata con errore", icon="⚠️")
     return False
-
 
 def latest_log_files(limit=5):
     log_dir = Path(LOG_DIR)
@@ -573,36 +805,30 @@ Le domande non riconosciute mostrano questi esempi: il motore è locale e basato
     return True, examples, None
 
 
-with st.sidebar:
-    st.header("Comandi")
-    st.write("Lancia gli script senza aprire PyCharm.")
-
-    if st.button("Crea tutto da zero", use_container_width=True):
+# -----------------------------------------------------------------------------
+# Comandi principali: niente sidebar, barra azioni sempre visibile in alto.
+# -----------------------------------------------------------------------------
+st.markdown('<div class="op-toolbar-marker"></div>', unsafe_allow_html=True)
+cmd_cols = st.columns([1.1, 1.1, 1.1, 0.9, 2.4], vertical_alignment="center")
+with cmd_cols[0]:
+    if st.button("🧱 Crea da zero", use_container_width=True):
         run_script("one_piece_collection_build.py")
-
-    if st.button("Aggiorna solo valori", use_container_width=True):
+with cmd_cols[1]:
+    if st.button("💶 Aggiorna valori", use_container_width=True):
         run_script("one_piece_collection_update_values.py")
-
-    if st.button("Sync nuove espansioni", use_container_width=True):
+with cmd_cols[2]:
+    if st.button("🔄 Sync espansioni", use_container_width=True):
         run_script("one_piece_collection_sync.py")
-
-    if st.button("Ricarica dati dashboard", use_container_width=True):
+with cmd_cols[3]:
+    if st.button("🔁 Ricarica", use_container_width=True):
         st.rerun()
+with cmd_cols[4]:
+    pass
 
-    st.divider()
-    st.write("Cartelle")
-    st.code(
-        f"root: {ROOT}\njson: {JSON_DIR}\nout: {Path(OUTPUT_XLSX).parent}\nstg: {STG_DIR}\nlogs: {LOG_DIR}\nbkp: {BKP_DIR}",
-        language="text",
-    )
-
-
-if st.session_state.get("last_run_output"):
-    with st.expander("Ultimo log esecuzione da Streamlit", expanded=False):
-        rc = st.session_state.get("last_run_returncode")
-        script = st.session_state.get("last_run_script", "")
-        st.caption(f"Script: {script} | Exit code: {rc}")
-        st.code(st.session_state["last_run_output"][-30000:], language="text")
+if st.session_state.get("last_run_summary"):
+    st.markdown('<div class="op-run-summary">', unsafe_allow_html=True)
+    st.markdown(st.session_state["last_run_summary"])
+    st.markdown('</div>', unsafe_allow_html=True)
 
 collection, source, generated_at = load_collection()
 
@@ -626,15 +852,16 @@ st.caption("Nota generale: i KPI e i grafici di valore/trend considerano le cart
 
 st.markdown("### Indice dashboard")
 st.markdown(
-    "Usa le schede qui sotto come indice rapido: **Panoramica**, **Top valore**, **Trend prezzi**, **Gestione carte**, **Domande database**, **File e log**."
+    "Usa le schede qui sotto come indice rapido: **Panoramica**, **Top valore**, **Trend prezzi**, **Gestione carte**, **Domande database**, **Debug mode**, **File e log**."
 )
 
-tab_overview, tab_top_value, tab_trends, tab_cards, tab_ai, tab_files = st.tabs([
+tab_overview, tab_top_value, tab_trends, tab_cards, tab_ai, tab_debug, tab_files = st.tabs([
     "📌 Panoramica",
     "💰 Top valore",
     "📈 Trend prezzi",
     "🃏 Gestione carte",
     "🔎 Domande database",
+    "🧪 Debug mode",
     "📁 File e log",
 ])
 
@@ -985,9 +1212,19 @@ with tab_cards:
     # Streamlit non permette di modificare session_state di un widget dopo che è stato creato.
     # I pulsanti preset impostano quindi una selezione pendente, applicata prima del multiselect.
     if "cards_cols_pending_preset" in st.session_state:
-        st.session_state["cards_visible_cols"] = st.session_state.pop("cards_cols_pending_preset")
-    if "cards_visible_cols" not in st.session_state:
-        st.session_state["cards_visible_cols"] = default_cols
+        pending_cols = st.session_state.pop("cards_cols_pending_preset")
+        st.session_state["cards_visible_cols"] = [c for c in pending_cols if c in available_cols]
+
+    # Se la struttura dati cambia tra una versione e l'altra, Streamlit può avere in sessione
+    # colonne che non esistono più nel dataset corrente. Il multiselect non accetta default
+    # fuori dalle options, quindi ripuliamo prima di creare il widget.
+    current_cols = st.session_state.get("cards_visible_cols", default_cols)
+    if isinstance(current_cols, str):
+        current_cols = [current_cols]
+    current_cols = [c for c in current_cols if c in available_cols]
+    if not current_cols:
+        current_cols = default_cols
+    st.session_state["cards_visible_cols"] = current_cols
 
     with st.expander("Colonne visibili e ordine", expanded=False):
         preset_cols = st.columns(4)
@@ -1329,6 +1566,81 @@ with tab_ai:
             - valore totale OP03
             """
         )
+
+
+with tab_debug:
+    st.header("Debug mode")
+    st.markdown("Verifica cosa farebbe **Aggiorna valori** partendo da un singolo `Cardmarket idProduct`, senza modificare file.")
+
+    dbg_cols = st.columns([1.2, 0.8, 2.0])
+    with dbg_cols[0]:
+        debug_idp = st.text_input("Cardmarket idProduct", value="", placeholder="es. 1234567")
+    with dbg_cols[1]:
+        run_debug = st.button("Analizza idProduct", use_container_width=True)
+    with dbg_cols[2]:
+        st.caption("La simulazione legge i JSON in `json/`, cerca prodotto e prezzo, trova le righe nel database e mostra i campi mercato che verrebbero aggiornati.")
+
+    if run_debug:
+        debug_result = debug_cardmarket_update_for_idproduct(debug_idp, collection)
+
+        if debug_result["ok"]:
+            st.success(debug_result["messages"][-1])
+        else:
+            for msg in debug_result["messages"]:
+                st.warning(msg)
+
+        step1, step2, step3, step4, step5 = st.tabs([
+            "1. File JSON", "2. Prodotto", "3. Prezzi", "4. Match database", "5. Aggiornamento simulato"
+        ])
+
+        with step1:
+            st.subheader("File usati")
+            if debug_result["files"]:
+                st.dataframe(pd.DataFrame([{"Tipo": k, "Percorso": v} for k, v in debug_result["files"].items()]), use_container_width=True, hide_index=True)
+            else:
+                st.info("Nessun file JSON individuato.")
+            st.subheader("Dati ricavati")
+            st.dataframe(pd.DataFrame([{"Campo": k, "Valore": v} for k, v in debug_result["derived"].items()]), use_container_width=True, hide_index=True)
+
+        with step2:
+            st.subheader("Riga products_singles")
+            if debug_result["product"]:
+                st.dataframe(pd.DataFrame([debug_result["product"]]), use_container_width=True, hide_index=True)
+            else:
+                st.error("Nessun prodotto trovato per questo idProduct.")
+
+        with step3:
+            st.subheader("Riga price_guide")
+            if debug_result["price"]:
+                st.dataframe(pd.DataFrame([debug_result["price"]]), use_container_width=True, hide_index=True)
+            else:
+                st.error("Nessun prezzo trovato per questo idProduct.")
+
+        with step4:
+            st.subheader("Righe trovate usando Cardmarket idProduct")
+            rows_idp = debug_result["rows_by_idproduct"]
+            if isinstance(rows_idp, pd.DataFrame) and not rows_idp.empty:
+                show_cols = [c for c in ["ID Carta", "Nome", "Lingua", "Variante", "Rarità", "Quantità", "Valore", "Cardmarket idProduct", "Cardmarket Nome"] if c in rows_idp.columns]
+                st.dataframe(rows_idp[show_cols], use_container_width=True)
+            else:
+                st.warning("Nessuna riga del database usa questo Cardmarket idProduct.")
+
+            st.subheader("Righe trovate usando l'ID Carta ricavato")
+            rows_card = debug_result["rows_by_card_id"]
+            if isinstance(rows_card, pd.DataFrame) and not rows_card.empty:
+                show_cols = [c for c in ["ID Carta", "Nome", "Lingua", "Variante", "Rarità", "Quantità", "Valore", "Cardmarket idProduct", "Cardmarket Nome"] if c in rows_card.columns]
+                st.dataframe(rows_card[show_cols], use_container_width=True)
+            else:
+                st.info("Nessuna riga trovata per ID Carta ricavato, oppure ID Carta non ricavabile dal nome prodotto.")
+
+        with step5:
+            st.subheader("Campi che verrebbero aggiornati")
+            preview = debug_result["updates_preview"]
+            if isinstance(preview, pd.DataFrame) and not preview.empty:
+                st.dataframe(preview, use_container_width=True, hide_index=True)
+                st.info("Nota: `Cardmarket idProduct` viene mostrato solo per diagnosi, ma non viene sovrascritto durante Aggiorna valori se è già la chiave di partenza.")
+            else:
+                st.warning("Nessun aggiornamento simulabile: manca il match nel database o manca la riga prezzo.")
 
 with tab_files:
     st.header("File e log")

@@ -19,3 +19,12 @@ bkp/*
 .idea/
 .vscode/
 
+
+# Local debug output / scratch files
+# Non caricare su GitHub eventuali file usati per debug manuale.
+debugmode/
+debug_mode/
+debug/
+*.debug.csv
+*.debug.json
+*.debug.log

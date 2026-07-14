@@ -112,7 +112,7 @@ Apre una dashboard nel browser con:
 - KPI valore/quantità;
 - grafici per rarità, lingua, trend prezzo ed espansione;
 - Top X in aumento/calo configurabile dall’utente;
-- dashboard organizzata in schede/indice: Panoramica, Top valore, Trend prezzi, Gestione carte, Domande database, File e log;
+- dashboard organizzata in schede/indice: Panoramica, Top valore, Trend prezzi, Gestione carte, Domande database, Debug mode, File e log;
 - ricerca principale con i campi più usati e pannello di ricerca avanzata;
 - scelta del tema dashboard in alto a destra, delle colonne visibili e del loro ordine nella gestione carte;
 - tabella filtrabile e modificabile in tutti i campi visibili, inclusi campi Cardmarket come `Cardmarket idProduct`;
@@ -124,7 +124,7 @@ Apre una dashboard nel browser con:
 - pulsanti per lanciare build/update/sync;
 - download di Excel e JSON;
 - visualizzazione degli ultimi log;
-- log live mentre build/update/sync sono in esecuzione.
+- riepilogo compatto a fine build/update/sync e log completi nella scheda File e log.
 
 
 ## Organizzazione dashboard Streamlit
@@ -150,9 +150,23 @@ La dashboard web è organizzata in schede che funzionano da indice rapido:
 - **Trend prezzi**: Top X aumenti/cali, con numero scelto dall’utente, e storico valore;
 - **Gestione carte**: ricerca semplice/avanzata, scelta colonne, modifica tabella, aggiunta righe, eliminazione carte selezionate da tabella dedicata e rimozione doppioni identici;
 - **Domande database**: domande locali sulla collezione, senza chiamate esterne;
+- **Debug mode**: simulazione di Aggiorna valori partendo da un singolo `Cardmarket idProduct`, con file JSON usati, prodotto trovato, prezzo trovato, righe del database e campi che verrebbero aggiornati;
 - **File e log**: download finali e consultazione log.
 
 La sezione **Trend prezzi** indica una sola volta che i confronti sono calcolati sulle carte possedute (`Quantità > 0`), poi i grafici usano titoli più puliti come `Top X in aumento` e `Top X in calo`.
+
+### Debug mode aggiornamento valori
+
+La scheda **Debug mode** serve a controllare una carta senza modificare il database. Inserisci un `Cardmarket idProduct` e la dashboard mostra:
+
+- quali JSON Cardmarket sta leggendo da `json/`;
+- se il prodotto esiste in `products_singles`;
+- se il prezzo esiste in `price_guide`;
+- quale `ID Carta` viene ricavato dal nome Cardmarket;
+- quali righe della collezione hanno quel `Cardmarket idProduct`;
+- quali soli campi mercato verrebbero aggiornati da `Aggiorna valori`.
+
+`Cardmarket idProduct` resta la chiave di partenza: viene usato per recuperare i dati mercato e non viene sovrascritto dall'aggiornamento valori.
 
 
 ## Gestione carte da Streamlit
@@ -261,6 +275,25 @@ Rarità JP candidate
 Fonte rarità JP
 ```
 
+
+### Aggiornamento valori conservativo
+
+Lo script `one_piece_collection_update_values.py` usa `Cardmarket idProduct` come chiave principale quando è presente. In questo modo recupera i dati mercato esatti della stessa entry Cardmarket e non cambia l'idProduct già salvato. `ID Carta` viene usato solo come fallback per righe nuove o non ancora mappate.
+
+Durante `Aggiorna valori` vengono aggiornati solo i campi di mercato/prezzo, per esempio:
+
+```text
+Valore
+Fonte prezzo
+CM_Data_Prezzo
+Cardmarket Nome
+CM_Low / CM_Trend / CM_Avg / CM_Avg1 / CM_Avg7 / CM_Avg30
+CM Expansion ...
+Trend prezzo / Variazione valore / Variazione %
+```
+
+Non vengono sovrascritti i campi manuali o catalogo come `Nome`, `Rarità`, `Lingua`, `Variante`, `Tipo carta`, `Color`, `Quantità` e `Cardmarket idProduct` già presente.
+
 ## Modifica dati da Streamlit
 
 Nella tabella carte di Streamlit puoi modificare tutti i campi visibili. I campi Cardmarket, inclusi `Cardmarket idProduct`, sono trattati come campi editabili quando sono mostrati nella tabella.
@@ -322,7 +355,7 @@ logs/
 
 I log contengono gli stessi messaggi mostrati a console.
 
-Dalla dashboard Streamlit, quando premi `Crea tutto da zero`, `Aggiorna solo valori` o `Sync nuove espansioni`, il log viene mostrato in tempo reale nella pagina.
+Dalla dashboard Streamlit, quando premi i pulsanti in alto `Crea da zero`, `Aggiorna valori` o `Sync espansioni`, il log viene mostrato in tempo reale nella pagina.
 
 Alla fine della run puoi usare `Ricarica dati dashboard` per rileggere Excel/JSON aggiornati.
 
@@ -387,3 +420,47 @@ valore totale OP03
 ```
 
 La dashboard capisce filtri come espansione (`OP03`, `OP-03`, `ST10`), lingua (`JP`, `EN`), rarità (`SEC`, `SR`, `TR`), carte possedute (`Quantità > 0`), valore unitario, valore posseduto, aumenti e cali.
+
+
+## Aggiornamento interfaccia: barra azioni e riepilogo
+
+La dashboard Streamlit non mostra più il log live nella pagina quando si avviano le operazioni principali. I pulsanti `Crea da zero`, `Aggiorna valori`, `Sync espansioni` e `Ricarica` sono in una barra sempre visibile in alto.
+
+A fine operazione compare un riepilogo breve nella pagina. I log completi restano disponibili nella scheda `File e log`.
+
+### Fix aggiornamento valori da Cardmarket idProduct
+
+`Aggiorna valori` usa `Cardmarket idProduct` come chiave primaria. Se la colonna esiste con varianti di nome come `Cardmarket IDProduct` o `Cardmarket IdProduct`, viene normalizzata automaticamente in `Cardmarket idProduct`.
+
+Se una riga ha un `Cardmarket idProduct`, il programma non fa fallback su `ID Carta`: questo evita di aggiornare una variante con il prezzo di un'altra variante della stessa carta. Se l'idProduct non viene trovato nei JSON Cardmarket, la riga viene lasciata invariata e segnalata nel report `stg/price_update_report.csv`.
+
+
+### Fix aggiornamento valori con Cardmarket idProduct
+
+`Aggiorna valori` usa `Cardmarket idProduct` come chiave primaria quando presente.
+Se una riga contiene un idProduct, il programma recupera i valori mercato direttamente da quello e non usa fallback su `ID Carta`.
+A fine aggiornamento viene generato anche:
+
+```text
+stg/idproduct_update_audit.csv
+```
+
+Questo file mostra, riga per riga, quale idProduct è stato usato e quale valore è stato applicato.
+
+### Correzione importante: aggiornamento valori da Cardmarket idProduct
+
+Se una riga contiene `Cardmarket idProduct`, l'aggiornamento valori usa quell'idProduct come chiave primaria.
+La ricerca non ricade su `ID Carta` quando l'idProduct è presente, così varianti diverse della stessa carta non vengono aggiornate con il prezzo sbagliato.
+
+Il programma usa anche un lookup diretto dai JSON Cardmarket non filtrati: questo permette di aggiornare correttamente idProduct che Cardmarket classifica come promo/speciali ma che l'utente ha associato manualmente a una riga della collezione.
+
+Il file di controllo viene scritto in:
+
+```text
+stg/idproduct_update_audit.csv
+```
+
+
+## Debug locale e GitHub
+
+Eventuali cartelle o file usati per debug manuale non vengono caricati su GitHub. Il `.gitignore` esclude `debugmode/`, `debug_mode/`, `debug/` e file `*.debug.csv`, `*.debug.json`, `*.debug.log`.

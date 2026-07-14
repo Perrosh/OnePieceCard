@@ -28,3 +28,5 @@ debug/
 *.debug.csv
 *.debug.json
 *.debug.log
+
+.streamlit/
